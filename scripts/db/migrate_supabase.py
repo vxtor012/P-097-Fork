@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -218,6 +219,17 @@ async def run(conn, mode: str, seed: bool = False) -> dict:
             if not before["row_counts"]:
                 raise OperationError("No application tables found; use bootstrap")
         applied = await apply_pending(conn)
+        if mode == "bootstrap" and seed:
+            # Catalog is a fresh-db snapshot; business fixtures read it without updating it.
+            sys.path.insert(0, str(ROOT))
+            from scripts.db import mock_data
+            data = await mock_data.snapshot(conn)
+            at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+            plan = mock_data.build_plan(data, at)
+            fingerprints = {t: await conn.fetchval(mock_data.fingerprint_sql(t))
+                            for t in mock_data.PROTECTED + mock_data.BUSINESS}
+            sql = mock_data.render_sql(plan, fingerprints).removeprefix("BEGIN;").removesuffix("COMMIT;")
+            await conn.execute(sql)
         after = await inspect(conn)
         if after["missing_columns"] or after["wrong_column_types"]:
             raise OperationError("Schema validation failed; transaction will be rolled back")
@@ -263,7 +275,7 @@ if __name__ == "__main__":
     commands = parser.add_subparsers(dest="mode", required=True)
     commands.add_parser("check", help="Read-only schema, row-count and table-access report")
     bootstrap = commands.add_parser("bootstrap", help="Create application tables in a fresh database")
-    bootstrap.add_argument("--seed", action="store_true", help="Load demo snapshot once")
+    bootstrap.add_argument("--seed", action="store_true", help="Load demo catalog snapshot and coherent business fixtures once")
     commands.add_parser("upgrade", help="Apply pending migrations without loading seed")
     try:
         sys.exit(asyncio.run(main(parser.parse_args())))

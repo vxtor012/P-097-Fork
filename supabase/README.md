@@ -31,3 +31,7 @@ backend role needs a reviewed access configuration before use. RLS does not
 replace authentication and authorization in FastAPI.
 
 See [database deployment and recovery](../docs/SUPABASE_DATABASE_GUIDE.md).
+
+## Dữ liệu demo nghiệp vụ
+
+`bootstrap --seed` tạo catalog demo và bộ buyer/chat/lead/quote/tồn kho liên kết. Với DB đã có catalog, dùng `scripts/db/mock_data.py plan/apply/check`; không chạy lại `seed.sql`. Xem [mock data guide](../docs/MOCK_DATA_GUIDE.md). Migration schema không tự nạp hoặc sửa mock.

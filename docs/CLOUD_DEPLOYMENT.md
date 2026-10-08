@@ -35,7 +35,7 @@ Thực hiện đầy đủ [Supabase database guide](SUPABASE_DATABASE_GUIDE.md)
 1. Tạo project riêng, lấy direct/session pooler connection string.
 2. Cài PostgreSQL client, kiểm tra đúng project và backup database hiện có.
 3. Kiểm kê bảng/cột/enum; phân biệt database trống với database đã có dữ liệu.
-4. Bootstrap DB trống bằng `python scripts/db/migrate_supabase.py bootstrap`; thêm `--seed` chỉ cho demo.
+4. Bootstrap DB trống bằng `python scripts/db/migrate_supabase.py bootstrap`; thêm `--seed` chỉ cho demo để có catalog và bộ buyer/chat/lead/quote/tồn kho liên kết. DB đã có catalog thì nạp mock riêng theo [mock data guide](MOCK_DATA_GUIDE.md), không chạy lại catalog seed.
 5. Nâng cấp DB cũ bằng `python scripts/db/migrate_supabase.py upgrade`: hai cột ảnh/màu nóc, index, RLS và thu hồi public grants.
 6. Kiểm tra schema, số dòng, bản giá trùng, ngày khuyến mãi, quyền/RLS.
 7. Quy trình cập nhật giá thật và phục hồi khi lỗi.

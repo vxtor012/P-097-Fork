@@ -9,11 +9,14 @@ Dành cho người triển khai/tiếp quản dự án bằng tài khoản của
 | Project mới, database chưa có bảng ứng dụng | `bootstrap`, mục 4 |
 | Database cũ có dữ liệu | Backup → `check` → `upgrade` → `check`, mục 5 |
 | Đổi giá/phí/ưu đãi | Migration dữ liệu được duyệt riêng, mục 7 |
+| Nạp/sửa mock nghiệp vụ, giữ catalog pipeline | [Mock data guide](MOCK_DATA_GUIDE.md) |
 | Phục hồi | Mục 8 |
 
-Nguồn schema: `src/orm_models.py`, baseline `scripts/db/schema.sql`, nâng cấp `supabase/migrations/`. `seed.sql` chỉ là snapshot demo. `create_all()` khi backend startup không ALTER bảng cũ và không chạy seed.
+Nguồn schema: `src/orm_models.py`, baseline `scripts/db/schema.sql` (gồm bảng hội thoại demo), nâng cấp `supabase/migrations/`. `seed.sql` chỉ chứa catalog demo; bộ nghiệp vụ liên kết được tạo bằng `scripts/db/mock_data.py`. `create_all()` khi backend startup không ALTER bảng cũ và không chạy seed.
 
 Migration `20261008030728_harden_autoquote_database.sql` đã được áp dụng trên P097 ngày 08/10/2026. File local có cùng version/name với lịch sử Supabase. Không sửa migration đã áp dụng; thay đổi tiếp theo tạo bằng `supabase migration new <name>`.
+
+Migration `20261008034446_add_demo_chat_sessions.sql` tạo bảng hội thoại nếu chưa có, giữ bảng/dữ liệu đã tồn tại và bảo vệ quyền truy cập; đã áp dụng cùng ngày. Nạp mock là thao tác riêng, không nằm trong migration schema.
 
 ## 2. Tạo project và chọn kết nối
 
@@ -97,9 +100,9 @@ python scripts/db/migrate_supabase.py bootstrap --seed
 python scripts/db/migrate_supabase.py check
 ```
 
-Chọn một trong hai lệnh bootstrap, không chạy liên tiếp. Script từ chối nếu có bất kỳ bảng ứng dụng nào, kể cả bảng rỗng. Schema, seed tùy chọn và migration history cùng nằm trong transaction; lỗi SQL rollback toàn bộ, không bị bỏ qua. File schema đã có `image_url`, `roof_hex`, index và RLS; seed đã sửa lỗi dấu phẩy nên không cần file bootstrap tạm.
+Chọn một trong hai lệnh bootstrap, không chạy liên tiếp. Script từ chối nếu có bất kỳ bảng ứng dụng nào, kể cả bảng rỗng. Schema, catalog seed, bộ mock nghiệp vụ tùy chọn và migration history cùng nằm trong transaction; lỗi SQL rollback toàn bộ. `--seed` tạo cả buyers/hội thoại/leads/quotes/tồn kho liên kết. Kiểm tra sau đó bằng `python scripts/db/mock_data.py check`; chi tiết trong [mock data guide](MOCK_DATA_GUIDE.md).
 
-Nếu có enum/bảng từ lần tạo thủ công dở trước đây, kiểm kê hoặc chọn project demo mới; không tự DROP schema. Bootstrap không dành cho database đã có leads/quotes. Snapshot demo chứa bảng giá `2025-Q4-v1`, khuyến mãi năm 2025 và password user placeholder: không dùng như dữ liệu production.
+Nếu có enum/bảng từ lần tạo thủ công dở trước đây, kiểm kê hoặc chọn project demo mới; không tự DROP schema. Bootstrap không dành cho database đã có leads/quotes. Snapshot demo chứa bảng giá `2025-Q4-v1`, khuyến mãi năm 2025 và tài khoản demo vô hiệu hóa mật khẩu: không dùng như dữ liệu production.
 
 `supabase/migrations/` hiện chứa migration nâng cấp, không phải baseline đầy đủ. Không dùng riêng `supabase db push` trên project trống; dùng bootstrap của repository trước.
 

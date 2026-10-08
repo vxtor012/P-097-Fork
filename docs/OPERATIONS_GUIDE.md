@@ -76,7 +76,7 @@ python scripts/db/migrate_supabase.py check
 
 Backup trước upgrade theo database guide. `check` chỉ đọc; schema cũ có thể exit 1 trước upgrade. Upgrade không seed và không đổi giá/leads/quotes. Đổi target phải đối chiếu host được script in ra trước thao tác.
 
-Database trống ngoài Compose: dùng `bootstrap`, thêm `--seed` nếu cần demo ngay lần đầu. Database Compose mới đã có bảng thì không bootstrap lại. Nếu volume init dở, kiểm kê các bảng/cột; không xóa volume hoặc chạy seed nhiều lần để chữa lỗi. Thử trên database demo riêng trước khi sửa dữ liệu cần giữ.
+Database trống ngoài Compose: dùng `bootstrap --seed` nếu cần cả catalog và bộ mock nghiệp vụ. Database Compose mới đã có schema/catalog thì không bootstrap lại; chạy `mock_data.py plan/apply/check` theo [mock data guide](MOCK_DATA_GUIDE.md) để có dữ liệu nghiệp vụ thống nhất. Không xóa volume hoặc chạy lại catalog seed để chữa lỗi. Mock cũ chỉ adoption sau khi xác nhận là dữ liệu giả và đã backup.
 
 ### Áp dụng cấu hình mới
 

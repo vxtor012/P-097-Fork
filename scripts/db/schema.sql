@@ -107,6 +107,17 @@ CREATE TABLE leads (
     updated_at    TIMESTAMP DEFAULT NOW()
 );
 
+-- Persisted demo conversations. Runtime agent currently uses MemorySaver.
+CREATE TABLE chat_sessions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id      VARCHAR(100) UNIQUE NOT NULL,
+    messages        JSON,
+    config_snapshot JSON,
+    ai_summary      TEXT,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
+);
+
 CREATE TABLE quotes (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id     VARCHAR(100) NOT NULL,
@@ -127,8 +138,7 @@ CREATE TABLE quotes (
     seller_note    TEXT,
     pdf_url        VARCHAR(500),
     created_at     TIMESTAMP DEFAULT NOW(),
-    reviewed_at    TIMESTAMP,
-    expires_at     TIMESTAMP DEFAULT (NOW() + INTERVAL '7 days')
+    reviewed_at    TIMESTAMP
 );
 
 CREATE TABLE inventory (
