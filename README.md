@@ -80,7 +80,7 @@ docker compose up --build
 docker compose down
 ```
 
-Frontend cổng 3000, backend 8000, PostgreSQL 5432. Compose đặt database hostname `postgres`; frontend gọi `http://backend:8000`. Dùng `DOCKER_DATABASE_URL` nếu cần thay database container. Redis có trong Compose nhưng ứng dụng hiện chưa dùng. Compose nạp catalog; để có buyers/hội thoại/leads/quotes/tồn kho thống nhất, chạy mock `plan/apply/check` theo [hướng dẫn](docs/MOCK_DATA_GUIDE.md).
+Frontend cổng 3000, backend 8000, PostgreSQL 5432. Compose đặt database hostname `postgres`; frontend gọi `http://backend:8000`. Dùng `DOCKER_DATABASE_URL` nếu cần thay database container. Redis có trong Compose nhưng ứng dụng hiện chưa dùng. Compose nạp catalog; để có buyers/hội thoại/leads/quotes/tồn kho thống nhất, xem phần mock trong [guide triển khai và vận hành](docs/CLOUD_DEPLOYMENT.md).
 
 ## Cấu hình AI trong `.env`
 
@@ -171,9 +171,6 @@ Xem [cloud deploy](docs/CLOUD_DEPLOYMENT.md) cho cấu hình Supabase, Render, V
 
 ## Tài liệu triển khai và vận hành
 
-- [Cloud deployment](docs/CLOUD_DEPLOYMENT.md): deploy từ đầu và thứ tự cập nhật release.
-- [Supabase database guide](docs/SUPABASE_DATABASE_GUIDE.md): tạo database, backup, nâng cấp schema cũ, cập nhật dữ liệu và phục hồi.
-- [Mock data guide](docs/MOCK_DATA_GUIDE.md): nạp/sửa buyers, hội thoại, leads, quotes và tồn kho thống nhất, giữ nguyên dữ liệu pipeline.
-- [Operations guide](docs/OPERATIONS_GUIDE.md): tiếp quản, kiểm tra dịch vụ, logs, cấu hình, release và xử lý sự cố.
+[Một guide duy nhất: đưa dự án lên public và vận hành](docs/CLOUD_DEPLOYMENT.md). Làm tuần tự từ Git/Gold, Supabase, Render, Vercel đến URL Production ai cũng truy cập được; backup, mock data, cập nhật và xử lý lỗi nằm trong cùng file.
 
 Schema/seed đã được sửa và migration nâng cấp được lưu trong `supabase/migrations/`. Database cũ chạy `python scripts/db/migrate_supabase.py upgrade`, sau đó `check`; database trống dùng `bootstrap` (thêm `--seed` chỉ cho demo). Không chạy lại seed để cập nhật giá. Bảng chỉ truy cập qua backend; RLS bật và browser roles không có quyền truy cập trực tiếp.

@@ -30,8 +30,8 @@ Public Supabase browser roles have no table privileges or RLS policies. A custom
 backend role needs a reviewed access configuration before use. RLS does not
 replace authentication and authorization in FastAPI.
 
-See [database deployment and recovery](../docs/SUPABASE_DATABASE_GUIDE.md).
+See the [single public deployment and operations guide](../docs/CLOUD_DEPLOYMENT.md) for database setup, backup, restore, and hosting.
 
 ## Dữ liệu demo nghiệp vụ
 
-`bootstrap --seed` tạo catalog demo và bộ buyer/chat/lead/quote/tồn kho liên kết. Với DB đã có catalog, dùng `scripts/db/mock_data.py plan/apply/check`; không chạy lại `seed.sql`. Xem [mock data guide](../docs/MOCK_DATA_GUIDE.md). Migration schema không tự nạp hoặc sửa mock.
+`bootstrap --seed` tạo catalog demo và bộ buyer/chat/lead/quote/tồn kho liên kết. Với DB đã có catalog, dùng `scripts/db/mock_data.py plan/apply/check`; không chạy lại `seed.sql`. Quy trình mock nằm trong phần B của [guide duy nhất](../docs/CLOUD_DEPLOYMENT.md). Migration schema không tự nạp hoặc sửa mock.

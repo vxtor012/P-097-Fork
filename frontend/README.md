@@ -24,4 +24,4 @@ npm run lint
 npm run build
 ```
 
-Vercel Root Directory = `frontend`, framework Next.js. Đặt `BACKEND_URL=https://<backend-domain>` cho Production/Preview phù hợp rồi tạo deployment mới. Xem [cloud deployment](../docs/CLOUD_DEPLOYMENT.md), [database Supabase](../docs/SUPABASE_DATABASE_GUIDE.md) và [vận hành](../docs/OPERATIONS_GUIDE.md).
+Vercel Root Directory = `frontend`, framework Next.js. Đặt `BACKEND_URL=https://<backend-domain>` cho Production/Preview phù hợp rồi tạo deployment mới. Làm tuần tự theo [guide duy nhất: public website và vận hành](../docs/CLOUD_DEPLOYMENT.md), gồm Supabase, Render, Vercel và kiểm tra quyền truy cập ẩn danh.
