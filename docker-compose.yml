@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vinfast_postgres
+    environment:
+      POSTGRES_DB: vinfast_ai
+      POSTGRES_USER: vinfast
+      POSTGRES_PASSWORD: vinfast123
+    volumes:
+      - vinfast_pg_data:/var/lib/postgresql/data
+      - ./scripts/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./scripts/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vinfast -d vinfast_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vinfast_net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: vinfast_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - vinfast_net
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vinfast_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DOCKER_DATABASE_URL:-postgresql+asyncpg://vinfast:vinfast123@postgres:5432/vinfast_ai}
+      - REDIS_URL=${DOCKER_REDIS_URL:-redis://redis:6379/0}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - vinfast_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    container_name: vinfast_frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - BACKEND_URL=${BACKEND_URL:-http://backend:8000}
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - vinfast_net
+    restart: unless-stopped
+
+networks:
+  vinfast_net:
+    driver: bridge
+
+volumes:
+  vinfast_pg_data:
