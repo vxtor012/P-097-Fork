@@ -67,3 +67,8 @@ frontend/out/
 frontend/.env.local
 skills
 scratch
+# Supabase local state and database backups
+supabase/.temp/
+supabase/.branches/
+*.dump
+*.backup

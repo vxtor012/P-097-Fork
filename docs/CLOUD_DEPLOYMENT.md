@@ -8,36 +8,60 @@ Browser → Vercel Next.js → Render FastAPI → Supabase PostgreSQL
                                   └─ Gold dataset + OpenAI Embeddings
 ```
 
+## Cách sử dụng tài liệu
+
+Deploy mới: chuẩn bị → Supabase → Render → Vercel → kiểm tra nghiệm thu. Deploy cập nhật: backup/kiểm kê/nâng cấp Supabase trước, rồi backend và frontend. Vận hành sau deploy theo [operations guide](OPERATIONS_GUIDE.md).
+
+Lệnh terminal chạy từ thư mục gốc repository; Windows PowerShell dùng `curl.exe` thay `curl`. Người triển khai cần quyền trên repository và cả ba dịch vụ. Không cần dùng project/domain có sẵn của người viết.
+
 ## 1. Chuẩn bị
 
+- Clone repository của bạn, checkout branch/commit sẽ deploy; ghi `git rev-parse HEAD`.
 - Repository có `Dockerfile`, `render.yaml`, lockfile frontend và dữ liệu Gold.
+- Nếu thao tác CLI local: Python 3.11+, Node.js 20.9+, PostgreSQL client; kiểm tra `python --version`, `node --version`, `psql --version`.
+- Chuẩn bị hai môi trường staging/production khi nâng cấp database có dữ liệu.
 - Supabase project, Render service, Vercel project thuộc tài khoản triển khai.
 - Key provider chat và OpenAI key cho RAG, kể cả khi chọn Google chat.
 - Model chat có quyền truy cập, cấu hình qua `MODEL_NAME` hoặc `GOOGLE_MODEL_NAME`.
 
-Không đưa `.env`, mật khẩu database, key AI vào Git hay biến `NEXT_PUBLIC_*`. Tài liệu cũ và `scripts/db/migrate_supabase.py` có URL kết nối hardcode; script này chưa đọc `DATABASE_URL`, không dùng để khởi tạo project mới. Nếu mật khẩu cũ còn sử dụng, cần đổi vì xóa khỏi tài liệu không xóa lịch sử Git.
+Không đưa `.env`, mật khẩu database, key AI vào Git hay biến `NEXT_PUBLIC_*`. Script `scripts/db/migrate_supabase.py` đọc `MIGRATION_DATABASE_URL` hoặc `DATABASE_URL`, không còn thông tin kết nối hardcode. Nếu mật khẩu từng có trong phiên bản cũ còn sử dụng, đổi có kế hoạch và cập nhật các dịch vụ; xóa khỏi mã không xóa lịch sử Git.
 
 Đăng nhập/dashboard frontend còn mock; xuất PDF chưa tạo file; API nghiệp vụ chưa có xác thực/phân quyền hoàn chỉnh. Bản triển khai phù hợp demo/kiểm thử; cần hoàn thiện các phần này trước khi tiếp nhận dữ liệu thật.
 
-## 2. Supabase PostgreSQL
+## 2. Supabase PostgreSQL: bước bắt buộc trước deploy backend
 
-Mở project → **Connect**, sao chép connection string. Backend chạy lâu dài có thể dùng direct connection nếu mạng hỗ trợ hoặc **Session pooler** cho IPv4. Xem [Supabase: kết nối PostgreSQL](https://supabase.com/docs/guides/database/connecting-to-postgres).
+Thực hiện đầy đủ [Supabase database guide](SUPABASE_DATABASE_GUIDE.md). Tài liệu có lệnh cho Bash/PowerShell và SQL Editor, gồm:
 
-Ví dụ URL backend qua session pooler:
+1. Tạo project riêng, lấy direct/session pooler connection string.
+2. Cài PostgreSQL client, kiểm tra đúng project và backup database hiện có.
+3. Kiểm kê bảng/cột/enum; phân biệt database trống với database đã có dữ liệu.
+4. Bootstrap DB trống bằng `python scripts/db/migrate_supabase.py bootstrap`; thêm `--seed` chỉ cho demo.
+5. Nâng cấp DB cũ bằng `python scripts/db/migrate_supabase.py upgrade`: hai cột ảnh/màu nóc, index, RLS và thu hồi public grants.
+6. Kiểm tra schema, số dòng, bản giá trùng, ngày khuyến mãi, quyền/RLS.
+7. Quy trình cập nhật giá thật và phục hồi khi lỗi.
+
+Không bỏ qua bước database vì backend có `create_all()`: nó không ALTER bảng cũ và không seed. Không chạy lại seed để cập nhật: có thể tạo giá/khuyến mãi trùng và không ghi đè giá cũ.
+
+Điều kiện để sang bước Render: script `check` exit 0, đủ cột `image_url` varchar(500)/`roof_hex` varchar(7), RLS bật, không có public grants, catalog có dữ liệu đã kiểm tra và backup sẵn sàng nếu nâng cấp. Seed demo chứa giá và ưu đãi 2025; cần dữ liệu được duyệt riêng để vận hành thật.
+
+URL backend (khác URL CLI psql):
 
 ```dotenv
 DATABASE_URL=postgresql+asyncpg://postgres.<project-ref>:<url-encoded-password>@<pooler-host>:5432/postgres
 ```
 
-Lấy host/username từ Dashboard, không tự ghép host theo region. URL-encode ký tự đặc biệt trong mật khẩu. `src/db.py` tự đổi prefix `postgresql://`/`postgres://` sang `postgresql+asyncpg://`.
+Dùng host/username thực từ Connect, không tự suy ra từ region. Kiểm tra kết nối theo [Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres).
 
-Nếu dùng transaction pooler cổng 6543, backend hiện đặt `statement_cache_size=0`, `prepared_statement_cache_size=0` khi nhận diện Supabase/pooler URL. Vẫn cần kiểm tra driver/chế độ pooler thực tế nếu xuất hiện lỗi prepared statement.
+Quy trình database có sẵn:
 
-### Khởi tạo database demo mới
+```bash
+python scripts/db/migrate_supabase.py check
+python scripts/db/migrate_supabase.py upgrade
+python scripts/db/migrate_supabase.py check
+```
 
-Chạy `scripts/db/schema.sql`, rồi `scripts/db/seed.sql` qua SQL Editor. Đọc và kiểm tra trước khi chạy: seed là dữ liệu mẫu. Schema có `CREATE TYPE` nên không chạy lại toàn bộ trên database đã khởi tạo; database có dữ liệu cần migration được kiểm tra riêng.
+Chạy backup trước `upgrade`; lỗi SQL rollback và không tự seed. Migration version `20261008030728` đã được ghi nhận trên P097, runner bỏ qua nếu đã áp dụng. `MIGRATION_DATABASE_URL` chỉ cần ở máy quản trị, không phải biến bắt buộc trên Render. Browser không dùng Supabase Data API: bảng chỉ dành cho kết nối backend owner/admin, không có public RLS policies.
 
-Backend gọi `create_all` nhưng không tự nạp seed. Kiểm tra catalog bằng `/api/v1/vehicles`; `/health` không kiểm tra database. Chat dùng catalog Gold CSV, không tự nhận thay đổi giá trong PostgreSQL.
 
 ## 3. Backend Render
 
@@ -85,7 +109,7 @@ Lưu URL thực tế Render cấp, ví dụ `https://<backend-service>.onrender.
 BACKEND_URL=https://<backend-service>.onrender.com
 ```
 
-`BACKEND_URL` là biến server-side, không kèm `/api/v1`. `frontend/app/api/chat/route.ts` và `vehicles/route.ts` tự thêm prefix. Hai proxy này không dùng `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_BACKEND_URL`. Biến Supabase public trong mẫu frontend chưa nối vào luồng hiện tại; database được truy cập qua backend.
+`BACKEND_URL` là biến server-side, không kèm `/api/v1`. `frontend/app/api/chat/route.ts` và `vehicles/route.ts` tự thêm prefix. Hai proxy này không dùng `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_BACKEND_URL`. Frontend không cần Supabase public key; database được truy cập qua backend.
 
 Deploy và lưu domain thực tế. Đổi biến môi trường cần deployment mới theo [Vercel environment variables](https://vercel.com/docs/environment-variables). Cập nhật `CORS_ORIGINS` trên Render bằng origin frontend rồi redeploy backend.
 
@@ -118,3 +142,11 @@ curl https://<frontend-domain>/api/vehicles
 | Giá chat khác configurator | Gold CSV, PostgreSQL và dữ liệu/phí local frontend chưa đồng bộ |
 
 LangGraph checkpoint ở bộ nhớ tiến trình: restart mất hội thoại, các instance không chia sẻ trạng thái. Pool backend hiện có `10` kết nối và tối đa `20` kết nối vượt pool mỗi tiến trình; cân đối số instance với giới hạn database. Không dùng filesystem container làm nơi lưu dữ liệu bền vững.
+
+## 7. Bàn giao và điều kiện nghiệm thu
+
+Lưu thông tin bàn giao theo mục 1 operations guide: repository/commit, URL/project của ba dịch vụ, provider/model, phiên bản dữ liệu, backup và nơi quản lý secret. Không đưa secret vào tài liệu bàn giao công khai.
+
+Chỉ xác nhận deploy hoàn tất khi catalog backend/proxy có dữ liệu, câu hỏi giá và kiến thức AI hoạt động, cấu hình mẫu có số tiền đối chiếu được, log không có lỗi database và schema đã kiểm tra. Không dùng giao diện fallback hoặc health OK làm bằng chứng database mới đã sẵn sàng.
+
+Đối với release nâng cấp, giữ commit trước để rollback ứng dụng; giữ backup và SQL đã áp dụng. Quy trình rollback/backup và lỗi thường gặp nằm trong [operations guide](OPERATIONS_GUIDE.md).

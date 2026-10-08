@@ -1,250 +1,186 @@
-# Sổ tay Vận hành Hệ thống (Operations Guide) — VinFast AI Agent
+# Sổ tay vận hành AutoQuote AI
 
-Tài liệu này hướng dẫn chi tiết quy trình triển khai, khởi chạy, kiểm tra và bảo trì hệ thống **VinFast AI Agent & Car Configurator** bằng Docker và Docker Compose, được trích xuất và chuẩn hóa trực tiếp từ cấu trúc codebase hiện hành.
+Dành cho người tiếp quản hệ thống mà không cần biết lịch sử phát triển. Deploy lần đầu theo [cloud deploy](CLOUD_DEPLOYMENT.md); tạo/nâng cấp database theo [Supabase database guide](SUPABASE_DATABASE_GUIDE.md). Các lệnh Docker chạy từ thư mục gốc. CLI database xem hướng dẫn PG trong tài liệu Supabase.
 
----
+## 1. Thông tin cần có khi tiếp quản
 
-## 1. Tổng quan Kiến trúc Dịch vụ Docker
+Lưu vào hồ sơ vận hành riêng, không commit bí mật:
 
-Hệ thống được thiết kế theo kiến trúc microservices/multi-container chạy trên mạng bridge nội bộ `vinfast_net`:
+| Thông tin | Nơi lấy |
+| --- | --- |
+| Repository, branch, commit đang chạy | Git và lịch sử deployment |
+| Backend URL, service ID, region, plan | Render Dashboard |
+| Frontend URL, project, Production/Preview | Vercel Dashboard |
+| Database project ref, region, host/port/user | Supabase Dashboard → Connect |
+| Provider/model chat, nơi quản lý key | Render Environment hoặc `.env` local |
+| Phiên bản catalog PostgreSQL/Gold/frontend | SQL `price_version`, commit dữ liệu |
+| Backup gần nhất, nơi lưu, lần thử restore | Hồ sơ backup |
+| Người có quyền xử lý sự cố, kênh liên hệ | Quản trị tài khoản triển khai |
 
-```mermaid
-graph TD
-    Client[Browser / Client] -->|Port 3000| Frontend[vinfast_frontend: Next.js 16 Standalone]
-    Client -->|Port 8000| Backend[vinfast_backend: FastAPI]
-    Frontend -->|Internal: http://backend:8000| Backend
-    Backend -->|Internal: postgres:5432| Postgres[(vinfast_postgres: PostgreSQL 16)]
-    Backend -->|Internal: redis:6379| Redis[(vinfast_redis: Redis 7)]
-    Postgres -->|Volume mount| PGData[(vinfast_pg_data Volume)]
-```
+Nếu chưa có quyền vào một dịch vụ, yêu cầu quản trị cấp quyền cho tài khoản của mình; không dùng key/tài khoản cá nhân người triển khai trước.
 
-### Chi tiết các dịch vụ trong `docker-compose.yml`:
+## 2. Kiểm tra đầu ca và sau mỗi thay đổi
 
-| Service | Container Name | Image / Base | Cổng Host | Chức năng & Ghi chú |
-| :--- | :--- | :--- | :--- | :--- |
-| **`postgres`** | `vinfast_postgres` | `postgres:16-alpine` | `5432:5432` | CSDL chính. Tự động chạy `schema.sql` và `seed.sql` khi tạo volume lần đầu. Có healthcheck `pg_isready`. |
-| **`redis`** | `vinfast_redis` | `redis:7-alpine` | `6379:6379` | Bộ nhớ đệm cache và message broker. |
-| **`backend`** | `vinfast_backend` | Multi-stage `python:3.11-slim` (`Dockerfile`) | `8000:8000` | FastAPI server, LangGraph Agent, SQLAlchemy ORM (asyncpg). Chạy dưới user `appuser` (non-root). |
-| **`frontend`** | `vinfast_frontend` | 3-stage `node:22-alpine` (`frontend/Dockerfile`) | `3000:3000` | Next.js 16 App Router (standalone mode), Three.js 3D Configurator, Tailwind v4. Chạy dưới user `nextjs` (non-root). |
+1. Xem Render/Vercel deployment đang chạy có đúng commit.
+2. GET backend `/health`: status OK chỉ xác nhận tiến trình chạy.
+3. GET backend `/api/v1/vehicles`: HTTP 200 và catalog không rỗng mới kiểm tra được đọc database.
+4. GET frontend `/api/vehicles`: xác nhận proxy đến đúng backend.
+5. Mở configurator, thử cấu hình đã có số tiền chuẩn để đối chiếu.
+6. Chat hỏi giá/phí và một câu kiến thức để kiểm tra riêng công cụ CSV và RAG.
+7. Xem log backend/frontend, lỗi DB, lỗi key/model/quota; xem CPU/memory/connections database và mức sử dụng tài khoản AI.
 
----
+Bash:
 
-## 2. Yêu cầu Tiền đề (Prerequisites)
-
-- **Docker Desktop** (trên Windows/macOS) hoặc **Docker Engine** + **Docker Compose v2+** (trên Linux).
-- Tối thiểu 4GB RAM khả dụng cho Docker engine.
-- API Key hợp lệ cho LLM:
-  - `OPENAI_API_KEY` (nếu dùng OpenAI - mặc định model `gpt-4o-mini`)
-  - HOẶC `GOOGLE_API_KEY` (nếu dùng Gemini - model `gemini-3.8-flash`)
-
----
-
-## 3. Cấu hình Môi trường (.env)
-
-Trước khi khởi động, cần thiết lập file cấu hình `.env` ở thư mục gốc:
-
-### 3.1. Tạo file `.env`
-Sao chép từ file mẫu:
 ```bash
-cp .env.example .env
-```
-*(Trên Windows PowerShell: `Copy-Item .env.example .env`)*
-
-### 3.2. Thiết lập các biến môi trường thiết yếu
-Mở `.env` và cập nhật các giá trị tối thiểu sau:
-
-```ini
-# ---- LLM Configuration ----
-LLM_PROVIDER=auto
-OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxx
-# Hoặc cấu hình Google Gemini:
-# LLM_PROVIDER=google
-# GOOGLE_API_KEY=AIzaxxxxxxxxxxxxxxxxxxxx
-
-# ---- Ứng dụng & Cổng ----
-APP_ENV=development
-APP_PORT=8000
-FRONTEND_PORT=3000
-CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000
-
-# ---- Backend Connection String trong Docker ----
-# Lưu ý: docker-compose.yml đã có fallback nội bộ:
-# DOCKER_DATABASE_URL=postgresql+asyncpg://vinfast:vinfast123@postgres:5432/vinfast_ai
-# DOCKER_REDIS_URL=redis://redis:6379/0
+curl --fail-with-body https://<backend-domain>/health
+curl --fail-with-body https://<backend-domain>/api/v1/vehicles
+curl --fail-with-body https://<frontend-domain>/api/vehicles
 ```
 
----
+PowerShell dùng `curl.exe` cho lệnh curl ở tài liệu. Kiểm tra chat qua UI hoặc Swagger `/docs` với JSON:
 
-## 4. Hướng dẫn Khởi chạy với Docker Compose
+```json
+{"session_id":"ops-smoke-test","message":"VF 6 Plus giá bao nhiêu?"}
+```
 
-### 4.1. Khởi động toàn bộ cụm dịch vụ
-Chạy lệnh build và khởi động tất cả container ở chế độ nền (detached):
+Smoke test AI có thể tiêu thụ quota. Không dùng thông tin khách hàng thật cho câu hỏi thử. Một HTTP 200 chat chưa chứng minh số tiền hoặc RAG đúng; đọc nội dung và đối chiếu nguồn.
+
+## 3. Chạy và quản trị Docker local
+
+### Khởi tạo
+
+```bash
+docker --version
+docker compose version
+```
+
+Tạo `.env` từ `.env.example`, điền key, chọn provider/model. PostgreSQL local và mật khẩu Compose chỉ phục vụ demo local. Backend Compose dùng `DOCKER_DATABASE_URL` nếu có; `DATABASE_URL` dành cho backend chạy trực tiếp trên máy. Redis có trong Compose nhưng ứng dụng hiện chưa dùng cache/broker.
 
 ```bash
 docker compose up -d --build
-```
-
-> **Cơ chế khởi động tuần tự (Healthcheck & Depends On):**
-> 1. `vinfast_postgres` khởi động và nạp dữ liệu từ `scripts/db/schema.sql`, `scripts/db/seed.sql`.
-> 2. `vinfast_redis` khởi động.
-> 3. `vinfast_backend` chỉ khởi động khi `postgres` đã vượt qua bước healthcheck (`service_healthy`) và `redis` đã start.
-> 4. `vinfast_frontend` chỉ khởi động khi `backend` đã vượt qua bước healthcheck tại endpoint `/health`.
-
-### 4.2. Kiểm tra trạng thái các container
-```bash
 docker compose ps
+docker compose logs --tail=100 backend frontend postgres
 ```
 
-Kết quả mong đợi:
-```text
-NAME               IMAGE            STATUS                    PORTS
-vinfast_backend    p-097-backend    Up (healthy)              0.0.0.0:8000->8000/tcp
-vinfast_frontend   p-097-frontend   Up                        0.0.0.0:3000->3000/tcp
-vinfast_postgres   postgres:16-alp  Up (healthy)              0.0.0.0:5432->5432/tcp
-vinfast_redis      redis:7-alpine   Up                        0.0.0.0:6379->6379/tcp
-```
+URL local: frontend 3000, backend 8000, PostgreSQL 5432. Dữ liệu postgres nằm trong named volume. Database mới được init bằng schema/seed đã sửa, gồm index và RLS. Database/volume đã tồn tại không tự nhận schema mới; dùng runner nâng cấp theo database guide. Nếu postgres init lỗi, không tự xóa volume: kiểm tra log và liệu đã có dữ liệu cần giữ.
 
-### 4.3. Xác minh hệ thống hoạt động
+### Nâng cấp database local hoặc Supabase
 
-1. **Frontend Web UI**: Truy cập [http://localhost:3000](http://localhost:3000)
-2. **Backend Health Check**:
-   ```bash
-   curl http://localhost:8000/health
-   # Phản hồi: {"status":"ok","env":"development"}
-   ```
-3. **Swagger API Interactive Documentation**: Truy cập [http://localhost:8000/docs](http://localhost:8000/docs)
-4. **Kiểm tra Catalog Xe**:
-   ```bash
-   curl http://localhost:8000/api/v1/vehicles
-   ```
+Backend chạy trên máy: đặt `DATABASE_URL` host `localhost`. Supabase: đặt `MIGRATION_DATABASE_URL` admin direct/session pooler trong `.env`. Runner chạy trên máy có dependencies, không chạy trong Docker image production:
 
----
-
-## 5. Thao tác Quản trị & Vận hành Thường nhật
-
-### 5.1. Xem nhật ký (Logs)
-- **Xem logs toàn bộ hệ thống (stream realtime)**:
-  ```bash
-  docker compose logs -f
-  ```
-- **Xem logs riêng từng dịch vụ**:
-  ```bash
-  docker compose logs -f backend
-  docker compose logs -f frontend
-  docker compose logs -f postgres
-  ```
-
-### 5.2. Tương tác trực tiếp với Database (PostgreSQL)
-- **Truy cập CLI `psql` trong container**:
-  ```bash
-  docker compose exec postgres psql -U vinfast -d vinfast_ai
-  ```
-- **Kiểm tra danh sách bảng**:
-  ```bash
-  docker compose exec postgres psql -U vinfast -d vinfast_ai -c "\dt"
-  ```
-- **Kiểm tra số lượng dữ liệu đã nạp (Seed status)**:
-  ```bash
-  docker compose exec postgres psql -U vinfast -d vinfast_ai -c "
-  SELECT tablename, n_live_tup AS rows FROM pg_stat_user_tables ORDER BY tablename;
-  "
-  ```
-- **Chạy lại seed data thủ công khi cần**:
-  ```bash
-  docker compose exec -T postgres psql -U vinfast -d vinfast_ai < scripts/db/seed.sql
-  ```
-
-### 5.3. Tương tác với Redis
-- **Kiểm tra kết nối Redis ping**:
-  ```bash
-  docker compose exec redis redis-cli ping
-  # Phản hồi: PONG
-  ```
-
-### 5.4. Chạy kiểm thử tự động (Test Suite) trong Docker
-Chạy toàn bộ pytest suite ngay trong môi trường backend container:
 ```bash
-docker compose exec backend pytest tests/ -v
+python scripts/db/migrate_supabase.py check
+python scripts/db/migrate_supabase.py upgrade
+python scripts/db/migrate_supabase.py check
 ```
 
-### 5.5. Rebuild riêng lẻ khi có thay đổi code
-- Khi sửa code backend hoặc requirements:
-  ```bash
-  docker compose up -d --build backend
-  ```
-- Khi sửa code frontend (lưu ý: Next.js standalone build phụ thuộc biến build arg):
-  ```bash
-  docker compose up -d --build frontend
-  ```
+Backup trước upgrade theo database guide. `check` chỉ đọc; schema cũ có thể exit 1 trước upgrade. Upgrade không seed và không đổi giá/leads/quotes. Đổi target phải đối chiếu host được script in ra trước thao tác.
 
----
+Database trống ngoài Compose: dùng `bootstrap`, thêm `--seed` nếu cần demo ngay lần đầu. Database Compose mới đã có bảng thì không bootstrap lại. Nếu volume init dở, kiểm kê các bảng/cột; không xóa volume hoặc chạy seed nhiều lần để chữa lỗi. Thử trên database demo riêng trước khi sửa dữ liệu cần giữ.
 
-## 6. Dừng & Dọn dẹp Hệ thống
+### Áp dụng cấu hình mới
 
-- **Dừng các container (giữ nguyên dữ liệu database)**:
-  ```bash
-  docker compose down
-  ```
-- **Dừng và xoá sạch volume dữ liệu (Reset DB hoàn toàn về trạng thái ban đầu)**:
-  ```bash
-  docker compose down -v
-  ```
-- **Dọn dẹp triệt để images thừa hoặc layer cũ**:
-  ```bash
-  docker system prune -f
-  ```
+Sửa `.env` rồi tạo lại container để nhận environment mới:
 
----
+```bash
+docker compose up -d --force-recreate backend
+docker compose up -d --force-recreate frontend
+```
 
-## 7. Xử lý Sự cố Thường gặp (Troubleshooting)
+`docker compose restart` chỉ restart container cũ, không nạp biến `.env` mới. Nếu sửa code/dependencies hoặc dữ liệu được COPY vào image:
 
-### 7.1. Backend báo lỗi: `RuntimeError: Configure OPENAI_API_KEY or GOOGLE_API_KEY`
-- **Nguyên nhân**: File `.env` chưa có API Key hoặc key mang giá trị placeholder (`sk-your-key-here`).
-- **Cách xử lý**:
-  1. Cập nhật `OPENAI_API_KEY` hoặc `GOOGLE_API_KEY` trong file `.env`.
-  2. Khởi động lại backend:
-     ```bash
-     docker compose restart backend
-     ```
+```bash
+docker compose up -d --build backend
+docker compose up -d --build frontend
+```
 
-### 7.2. Xung đột cổng (Port conflict: 5432, 6379, 8000, 3000)
-- **Triệu chứng**: `Error response from daemon: Ports are not available: exposing port TCP 0.0.0.0:5432...`
-- **Nguyên nhân**: Máy host đang chạy PostgreSQL, Redis hoặc ứng dụng khác chiếm cổng.
-- **Cách xử lý**:
-  - Tắt ứng dụng đang chiếm cổng trên host, hoặc:
-  - Thay đổi cổng ánh xạ bên trái trong file `docker-compose.yml` (ví dụ `"5433:5432"`, `"8001:8000"`, hoặc sửa `FRONTEND_PORT=3001` trong `.env`).
+Các proxy hiện dùng `BACKEND_URL` server-side, không dùng `NEXT_PUBLIC_API_URL`. Khi đổi URL backend kiểm tra giá trị backend trong đúng container/deployment, không sửa CORS thay cho lỗi server-to-server.
 
-### 7.3. Frontend không gọi được Backend từ Browser
-- **Triệu chứng**: Giao diện báo lỗi mạng hoặc CORS error khi cấu hình xe/chat AI.
-- **Nguyên nhân**:
-  - `NEXT_PUBLIC_API_URL` được nướng vào bundle lúc build client. Nếu đổi cổng backend trên host mà không rebuild frontend, client browser vẫn gửi request về cổng cũ.
-  - `CORS_ORIGINS` trong `.env` chưa chứa domain/port của frontend.
-- **Cách xử lý**:
-  1. Đảm bảo `CORS_ORIGINS` bao gồm nguồn gọi của frontend.
-  2. Rebuild frontend với tham số chính xác:
-     ```bash
-     docker compose build --no-cache frontend
-     docker compose up -d frontend
-     ```
+### Log và dừng
 
-### 7.4. Database không có bảng hoặc dữ liệu mẫu
-- **Nguyên nhân**: Volume `vinfast_pg_data` đã được khởi tạo từ trước khi thêm file seed.
-- **Cách xử lý**:
-  ```bash
-  docker compose down -v
-  docker compose up -d postgres
-  # Đợi 5 giây cho container tự nạp schema và seed, sau đó chạy:
-  docker compose up -d
-  ```
+```bash
+docker compose logs --tail=200 backend
+docker compose logs -f backend
+docker compose down
+```
 
----
+Dùng Ctrl+C để dừng theo dõi log. `down` giữ named volume. Không dùng `down -v` để chữa lỗi schema/seed trên database cần giữ; thao tác đó xóa volume dữ liệu local. Không chạy system prune toàn máy như bước vận hành thường xuyên.
 
-## 8. Danh mục Cổng & Điểm kết nối (Reference Ports & Endpoints)
+### Test code
 
-| Dịch vụ | Địa chỉ Host | Tài khoản / Thông số |
-| :--- | :--- | :--- |
-| **Frontend Web** | `http://localhost:3000` | Giao diện tư vấn xe & 3D Configurator |
-| **Backend API Docs** | `http://localhost:8000/docs` | Swagger UI tương tác trực tiếp API |
-| **Backend Health** | `http://localhost:8000/health` | HTTP GET trả về JSON status |
-| **PostgreSQL** | `localhost:5432` | User: `vinfast` \| Pass: `vinfast123` \| DB: `vinfast_ai` |
-| **Redis** | `localhost:6379` | Database `0`, không mật khẩu mặc định |
+Chạy trên máy đã cài dependencies, `.env` với PostgreSQL URL phù hợp:
+
+```bash
+python -m pytest
+python -m ruff check src tests
+cd frontend
+npm ci
+npm run lint
+npm run build
+```
+
+Image backend production không COPY `tests/` nên không chạy `pytest tests/` trong container đó.
+
+## 4. Release cloud và rollback
+
+1. Ghi commit hiện tại, commit đích, thay đổi env, schema, dữ liệu và thời gian bảo trì nếu có.
+2. Backup trước thay đổi database/dữ liệu; thử trên staging.
+3. Tắt/kiểm soát auto-deploy khi migration yêu cầu thứ tự. Blueprint hiện có `autoDeploy: true`, push có thể kích hoạt deploy ngay.
+4. Áp dụng schema tương thích ngược trước backend mới; xác nhận dữ liệu theo Supabase guide. `create_all()` không nâng cấp bảng hiện có.
+5. Render deploy đúng commit; xem build/runtime log, `/health` và `/api/v1/vehicles`.
+6. Vercel deploy frontend tương ứng, kiểm tra proxy và UI.
+7. Chạy smoke test mục 2; ghi kết quả và mở lại thao tác ghi nếu đã bảo trì.
+
+Nếu lỗi ứng dụng, deploy lại commit/backend và deployment/frontend trước đó bằng Dashboard. Giữ cột nullable vừa thêm nếu code cũ vẫn tương thích. Rollback code không rollback dữ liệu; nếu dữ liệu bị sai, theo quy trình phục hồi database, không reset DB. Các secret/env đã đổi cần khôi phục giá trị phù hợp từ kho bí mật, vì rollback deployment không bảo đảm đảo mọi cấu hình.
+
+## 5. Backup và thử phục hồi
+
+Trước release DB và theo lịch của người vận hành, export dump bằng mục 3 Supabase guide. Không dựa vào `/health` để xác nhận backup. Tối thiểu kiểm tra file có thể liệt kê bằng `pg_restore --list`; định kỳ thử restore vào database staging trống rồi chạy kiểm tra schema/số dòng/API.
+
+Bản backup phải có: thời điểm và múi giờ, project ref, commit, phạm vi schema, checksum, nơi lưu và kết quả restore gần nhất. Backup `public` không bao gồm file Storage/Auth, và `--no-acl` không giữ grants. Kiểm tra quyền/RLS lại khi restore. Người quản trị đặt thời gian mất dữ liệu tối đa chấp nhận được và thời gian phục hồi mục tiêu để quyết định lịch backup.
+
+Không commit dump vào repo. Nếu dùng backup Dashboard/PITR, xác nhận quyền lợi plan, retention và thời điểm backup thực tế theo [Supabase backups](https://supabase.com/docs/guides/platform/backups).
+
+## 6. Cập nhật model, key và dữ liệu
+
+| Thay đổi | Thao tác cần làm |
+| --- | --- |
+| OpenAI chat model | Đổi `MODEL_NAME`, restart/redeploy, kiểm tra chat/tool calling |
+| Google chat model | Đổi `GOOGLE_MODEL_NAME`, đặt `LLM_PROVIDER=google`, kiểm tra quyền model |
+| Key AI | Tạo key mới, cập nhật secret, redeploy, kiểm tra chat/RAG rồi thu hồi key cũ |
+| Password DB | Đổi có kế hoạch, cập nhật URL đã encode trên các môi trường, redeploy và kiểm tra catalog |
+| Giá/phí PostgreSQL | Backup, cập nhật transaction/version, đối chiếu số tiền API |
+| Catalog/knowledge Gold | Kiểm tra dữ liệu, cập nhật corpus tương ứng, rebuild backend, kiểm tra chat |
+| Embedding model | Cần tạo lại corpus và cập nhật retrieval; không đổi chỉ bằng biến chat model |
+
+Khi có cả hai key, `auto` ưu tiên OpenAI chat. Google chat vẫn cần OpenAI key để RAG embedding. Settings, LLM và corpus được cache trong tiến trình nên cần tiến trình mới sau thay đổi.
+
+Xem mục 7 Supabase guide để đồng bộ các nguồn giá. Seed chứa snapshot 2025, không phải bảng giá đang áp dụng hôm nay. Không tự gia hạn khuyến mãi chỉ để có kết quả test.
+
+## 7. Chẩn đoán sự cố
+
+| Triệu chứng | Kiểm tra theo thứ tự | Xác nhận phục hồi |
+| --- | --- | --- |
+| Frontend không tải | Vercel deployment/build log, đúng domain/env | Trang mở và proxy catalog trả 200 |
+| Health OK, catalog 500 | Log DB, URL/user/password, network, thiếu `image_url`/`roof_hex`, schema | API catalog trả không rỗng |
+| Catalog rỗng nhưng UI có xe | DB chưa seed; frontend có fallback local | Đối chiếu catalog API với SQL |
+| Chat lỗi | Render log, provider/key/model/quota, kết nối AI | Chat có nội dung đúng và tool gọi được |
+| RAG không trả nguồn | OpenAI key, embedding quota, file Gold | Câu kiến thức truy xuất được corpus |
+| Prepared statement lỗi | Pooler mode và cache, phiên bản asyncpg/SQLAlchemy | Request lặp lại không lỗi |
+| Giá trùng hoặc sai | SQL bản giá mở, seed bị chạy nhiều lần, PostgreSQL/Gold/frontend lệch | Cấu hình mẫu có số tiền thống nhất |
+| Ưu đãi không xuất hiện | Ngày bắt đầu/kết thúc, active, điều kiện model/tỉnh | Chính sách hợp lệ hiện đúng |
+| Mất lịch sử chat sau restart | MemorySaver chỉ trong tiến trình | Tạo session mới; chưa có checkpoint bền vững |
+| Dashboard không phản ánh DB | Trang đang dùng mock | Đây chưa phải luồng dữ liệu thật |
+| PDF URL không tải | Endpoint mới placeholder, chưa có generator/file | Cần triển khai chức năng, không phải lỗi proxy |
+
+Khi xử lý: ghi thời điểm, commit, endpoint, HTTP status, lỗi rút gọn; không gửi toàn bộ env, password, key hoặc dữ liệu khách hàng trong log chia sẻ. Không retry liên tục lỗi authentication, schema hoặc cú pháp SQL.
+
+## 8. Giới hạn cần biết
+
+- Bảng DB đã bật RLS và thu hồi quyền anon/authenticated; truy cập qua backend owner/admin. Các INFO RLS không policy/index chưa dùng không tự biến thành lỗi cần mở quyền.
+- Auth frontend là mock; API ghi dữ liệu chưa có kiểm soát quyền đầy đủ. Chưa vận hành với dữ liệu khách hàng thật.
+- MemorySaver mất hội thoại khi restart, không chia sẻ giữa nhiều worker/instance.
+- Pool backend có `pool_size=10`, `max_overflow=20` mỗi tiến trình; tính tổng khi tăng số instance.
+- Health là liveness, chưa phải readiness database/AI.
+- Docker chỉ copy `src/`, `dataset/`; fallback web lookup dưới `data/vinfast_agent` chưa được đóng gói.
+- Docker HEALTHCHECK dùng port 8000, còn CMD dùng `PORT`; kiểm tra health của nền tảng theo cổng thực tế nếu override `PORT`.

@@ -1,25 +1,8 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-DB_HOST="${DB_HOST:-localhost}"
-DB_PORT="${DB_PORT:-5432}"
-DB_NAME="${DB_NAME:-vinfast_ai}"
-DB_USER="${DB_USER:-vinfast}"
-
-export PGPASSWORD="${DB_PASS:-vinfast123}"
-
-echo "📐 Tạo bảng..."
-psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
-     -f scripts/db/schema.sql
-
-echo "🌱 Nhập dữ liệu mẫu..."
-psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
-     -f scripts/db/seed.sql
-
-echo ""
-echo "✅ Xong! Kiểm tra:"
-psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "
-SELECT tablename, n_live_tup AS rows
-FROM pg_stat_user_tables
-ORDER BY tablename;
-"
+# Same guarded runner as Supabase; reads .env instead of hardcoded credentials.
+# Usage: bash scripts/db/init_db.sh bootstrap --seed
+# Existing database: bash scripts/db/init_db.sh upgrade
+task_script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec python "$task_script_dir/migrate_supabase.py" "$@"

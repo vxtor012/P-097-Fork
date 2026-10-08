@@ -1,3 +1,4 @@
+-- Demo snapshot only. Run once on a fresh database; never use as a price update.
 -- Dealers
 INSERT INTO dealers (id, name, province, address, phone) VALUES
   ('d1000000-0000-0000-0000-000000000001','VinFast Mỹ Đình',   'Hà Nội',          'Vincom Mega Mall Mỹ Đình','024 3974 3888'),
@@ -94,7 +95,7 @@ INSERT INTO vehicle_prices (id, model, version, color, color_hex, price, price_v
   (gen_random_uuid(), 'VF9', 'Plus', 'Xám Tinh Tế', '#5F6363', 1499000000, '2025-Q4-v1', '2025-10-01', 'https://shop.vinfastauto.com/on/demandware.static/-/Sites-vinfast_vn_master/default/dw72fbcd05/images/VF9/NE3NV/CE1V.png'),
   (gen_random_uuid(), 'VF9', 'Plus', 'Xanh Bạc Hà', '#7CB3A3', 1499000000, '2025-Q4-v1', '2025-10-01', 'https://shop.vinfastauto.com/on/demandware.static/-/Sites-vinfast_vn_master/default/dw29074c9e/images/VF9/NE3NV/CE1W.png'),
   (gen_random_uuid(), 'VF9', 'Plus', 'Đỏ Thẫm Quý Phái', '#BA0C2F', 1499000000, '2025-Q4-v1', '2025-10-01', 'https://shop.vinfastauto.com/on/demandware.static/-/Sites-vinfast_vn_master/default/dwb97545ea/images/VF9/NE3NV/CE1M.png'),
-  (gen_random_uuid(), 'VF9', 'Plus', 'Xanh Rêu Đậm', '#2E4D38', 1499000000, '2025-Q4-v1', '2025-10-01', 'https://shop.vinfastauto.com/on/demandware.static/-/Sites-vinfast_vn_master/default/dw19ebd8dd/images/VF9/NE3NV/CE22.png'),
+  (gen_random_uuid(), 'VF9', 'Plus', 'Xanh Rêu Đậm', '#2E4D38', 1499000000, '2025-Q4-v1', '2025-10-01', 'https://shop.vinfastauto.com/on/demandware.static/-/Sites-vinfast_vn_master/default/dw19ebd8dd/images/VF9/NE3NV/CE22.png')
 ON CONFLICT DO NOTHING;
 
 -- Battery prices

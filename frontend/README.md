@@ -1,36 +1,27 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AutoQuote AI — Frontend
 
-## Getting Started
+Giao diện Next.js 16 cho cấu hình xe, chat tư vấn và dashboard demo. Backend FastAPI và database PostgreSQL được triển khai riêng; frontend không gọi Supabase Data API trực tiếp.
 
-First, run the development server:
+## Chạy local
+
+Từ thư mục `frontend`, với Node.js 20.9+:
 
 ```bash
+npm ci
+cp .env.example .env.local
+# PowerShell: Copy-Item .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`BACKEND_URL=http://localhost:8000` trong `.env.local` là URL server-side, không kèm `/api/v1`. Proxy `/api/chat` và `/api/vehicles` tự thêm prefix. Mở http://localhost:3000; backend và database phải khởi động theo [README dự án](../README.md).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Không đặt database password, key AI hoặc key Supabase quản trị vào frontend environment. Đăng nhập và dashboard hiện dùng mock; chưa có phân quyền production hoàn chỉnh.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Kiểm tra và deploy
 
-## Learn More
+```bash
+npm run lint
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Vercel Root Directory = `frontend`, framework Next.js. Đặt `BACKEND_URL=https://<backend-domain>` cho Production/Preview phù hợp rồi tạo deployment mới. Xem [cloud deployment](../docs/CLOUD_DEPLOYMENT.md), [database Supabase](../docs/SUPABASE_DATABASE_GUIDE.md) và [vận hành](../docs/OPERATIONS_GUIDE.md).
