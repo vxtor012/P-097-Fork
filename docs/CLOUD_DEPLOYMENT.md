@@ -1,141 +1,120 @@
-# 🚀 Hướng Dẫn Triển Khai Cloud: Supabase + Render + Vercel
+# Triển khai AutoQuote AI: Supabase + Render + Vercel
 
-Tài liệu này hướng dẫn chi tiết quy trình đưa toàn bộ hệ sinh thái **VinFast AI Agent (P-097)** lên hạ tầng Cloud production:
-- **Database**: Supabase PostgreSQL
-- **Backend API & AI Agent**: Render (FastAPI + LangGraph Docker Web Service)
-- **Frontend App**: Vercel (Next.js 15)
+Hướng dẫn cho mã nguồn hiện tại: PostgreSQL trên Supabase, FastAPI/LangGraph trên Render, Next.js 16 trong `frontend/` trên Vercel. Domain, project ref, mật khẩu và key dưới đây là placeholder; lấy giá trị thực từ tài khoản triển khai.
 
----
-
-## 🏗 Kiến Trúc Triển Khai
-
-```mermaid
-flowchart LR
-    User([Người dùng]) --> Vercel["Vercel (Frontend Next.js)"]
-    Vercel -- REST API --> Render["Render (Backend FastAPI + LangGraph)"]
-    Render -- Transaction Pooler :6543 --> Supabase[("Supabase (PostgreSQL 17)")]
-    Render -- AI Inference --> Gemini["Google Gemini API / OpenAI"]
+```text
+Browser → Vercel Next.js → Render FastAPI → Supabase PostgreSQL
+                                  ├─ OpenAI / Google chat
+                                  └─ Gold dataset + OpenAI Embeddings
 ```
 
----
+## 1. Chuẩn bị
 
-## 1. 🗄 Bước 1: Triển Khai Database lên Supabase
+- Repository có `Dockerfile`, `render.yaml`, lockfile frontend và dữ liệu Gold.
+- Supabase project, Render service, Vercel project thuộc tài khoản triển khai.
+- Key provider chat và OpenAI key cho RAG, kể cả khi chọn Google chat.
+- Model chat có quyền truy cập, cấu hình qua `MODEL_NAME` hoặc `GOOGLE_MODEL_NAME`.
 
-Dự án đã có script tự động [scripts/db/migrate_supabase.py](file:///c:/Users/Vxtor/Documents/workspace/P-097/scripts/db/migrate_supabase.py) nạp toàn bộ cấu trúc bảng và dữ liệu mẫu lên Supabase PostgreSQL.
+Không đưa `.env`, mật khẩu database, key AI vào Git hay biến `NEXT_PUBLIC_*`. Tài liệu cũ và `scripts/db/migrate_supabase.py` có URL kết nối hardcode; script này chưa đọc `DATABASE_URL`, không dùng để khởi tạo project mới. Nếu mật khẩu cũ còn sử dụng, cần đổi vì xóa khỏi tài liệu không xóa lịch sử Git.
 
-### Hiện trạng
-- **Project ID**: `ddkeoxomfypnoqdcxwxa` (Region: `aws-0-ap-southeast-1`)
-- **Trạng thái**: Đã chạy migration thành công! Các bảng `dealers`, `users`, `vehicle_prices`, `battery_prices`, `accessories`, `rolling_costs`, `promotions`, `quotes`, `leads` đã có dữ liệu đầy đủ.
-- **Connection String (Transaction Pooler - khuyến nghị cho Cloud/Serverless)**:
-  ```text
-  postgresql+asyncpg://postgres.ddkeoxomfypnoqdcxwxa:Tckzeros.11@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
-  ```
+Đăng nhập/dashboard frontend còn mock; xuất PDF chưa tạo file; API nghiệp vụ chưa có xác thực/phân quyền hoàn chỉnh. Bản triển khai phù hợp demo/kiểm thử; cần hoàn thiện các phần này trước khi tiếp nhận dữ liệu thật.
 
-> [!NOTE]
-> Mã nguồn backend tại [src/db.py](file:///c:/Users/Vxtor/Documents/workspace/P-097/src/db.py) đã được cấu hình tự động vô hiệu hóa statement cache (`statement_cache_size=0`) khi nhận diện URL Supabase Transaction Pooler, tránh lỗi `prepared statement already exists`.
+## 2. Supabase PostgreSQL
 
----
+Mở project → **Connect**, sao chép connection string. Backend chạy lâu dài có thể dùng direct connection nếu mạng hỗ trợ hoặc **Session pooler** cho IPv4. Xem [Supabase: kết nối PostgreSQL](https://supabase.com/docs/guides/database/connecting-to-postgres).
 
-## 2. ⚡ Bước 2: Triển Khai Backend lên Render
+Ví dụ URL backend qua session pooler:
 
-Dự án đã tạo sẵn file Blueprint Infrastructure-as-Code [render.yaml](file:///c:/Users/Vxtor/Documents/workspace/P-097/render.yaml).
-
-### Cách 1: Triển khai bằng Render Blueprint (Khuyên dùng - 1 click)
-1. Đẩy code lên GitHub:
-   ```bash
-   git add .
-   git commit -m "feat(deploy): add Render Blueprint and Vercel configs"
-   git push origin main
-   ```
-2. Truy cập [Render Dashboard Blueprints](https://dashboard.render.com/blueprints).
-3. Bấm **New Blueprint Instance** -> Chọn repository `AI20K-Build-Phase-Cohort-4/P-097`.
-4. Render sẽ tự động đọc [render.yaml](file:///c:/Users/Vxtor/Documents/workspace/P-097/render.yaml).
-5. Điền các biến môi trường được đánh dấu bí mật (`sync: false`):
-   - `DATABASE_URL`:
-     ```text
-     postgresql+asyncpg://postgres.ddkeoxomfypnoqdcxwxa:Tckzeros.11@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
-     ```
-   - `GOOGLE_API_KEY`: Key Gemini của bạn.
-   - `OPENAI_API_KEY`: Key OpenAI (nếu có, hoặc bỏ qua nếu dùng Google).
-   - `CORS_ORIGINS`: Tạm thời để `*` hoặc điền domain Vercel sau khi tạo ở Bước 3.
-6. Bấm **Apply**. Render sẽ build Docker image và khởi động service tại domain:
-   `https://vinfast-ai-backend.onrender.com`
-
-### Cách 2: Tạo thủ công qua Render Web Service UI
-1. Vào [Render Dashboard](https://dashboard.render.com/) -> Bấm **New +** -> **Web Service**.
-2. Chọn repo `AI20K-Build-Phase-Cohort-4/P-097`.
-3. Cấu hình thông tin:
-   - **Name**: `vinfast-ai-backend`
-   - **Region**: `Singapore (Southeast Asia)`
-   - **Runtime**: `Docker`
-   - **Dockerfile Path**: `./Dockerfile`
-   - **Instance Type**: `Free`
-4. Tại mục **Environment Variables**, thêm:
-   | Biến | Giá trị |
-   |------|---------|
-   | `APP_ENV` | `production` |
-   | `DATABASE_URL` | `postgresql+asyncpg://postgres.ddkeoxomfypnoqdcxwxa:Tckzeros.11@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres` |
-   | `LLM_PROVIDER` | `google` |
-   | `GOOGLE_API_KEY` | *(Khóa Gemini API của bạn)* |
-   | `CORS_ORIGINS` | `*` *(hoặc domain frontend Vercel)* |
-5. Bấm **Create Web Service**. Kiểm tra endpoint health: `https://<tên-app>.onrender.com/health` trả về `{"status":"ok"}` là thành công!
-
----
-
-## 3. 🌐 Bước 3: Triển Khai Frontend lên Vercel
-
-Frontend được viết bằng Next.js 15 nằm trong thư mục [frontend/](file:///c:/Users/Vxtor/Documents/workspace/P-097/frontend).
-
-### Cách 1: Triển khai qua Vercel Dashboard (Khuyên dùng)
-1. Truy cập [Vercel Dashboard](https://vercel.com/new).
-2. Bấm **Import** repository `AI20K-Build-Phase-Cohort-4/P-097`.
-3. **CẤU HÌNH QUAN TRỌNG NHẤT (Root Directory)**:
-   - Bấm nút **Edit** cạnh mục **Root Directory**.
-   - Chọn hoặc gõ: `frontend`.
-   - Vercel sẽ tự động phát hiện Framework: **Next.js**.
-4. Cấu hình **Environment Variables**:
-   | Tên biến | Giá trị | Ghi chú |
-   |----------|---------|---------|
-   | `NEXT_PUBLIC_API_URL` | `https://vinfast-ai-backend.onrender.com/api/v1` | URL backend vừa tạo ở Bước 2 |
-5. Bấm **Deploy**.
-   Vercel sẽ tự động cài package, build standalone bundle và cung cấp domain:
-   `https://p-097-vinfast.vercel.app` (hoặc domain tương đương).
-
-### Cách 2: Triển khai nhanh bằng Vercel CLI
-Tại thư mục gốc dự án:
-```powershell
-# Chuyển vào thư mục frontend
-cd frontend
-
-# Đăng nhập và deploy lên Vercel
-npx vercel --prod
+```dotenv
+DATABASE_URL=postgresql+asyncpg://postgres.<project-ref>:<url-encoded-password>@<pooler-host>:5432/postgres
 ```
-- Khi Vercel hỏi:
-  - *Set up and deploy?* -> `Y`
-  - *Which scope?* -> Chọn account của bạn
-  - *Link to existing project?* -> `N`
-  - *Project name?* -> `vinfast-ai-app`
-  - *In which directory is your code located?* -> `./` (vì đang ở trong thư mục `frontend`)
-  - *Want to modify settings?* -> `N`
 
----
+Lấy host/username từ Dashboard, không tự ghép host theo region. URL-encode ký tự đặc biệt trong mật khẩu. `src/db.py` tự đổi prefix `postgresql://`/`postgres://` sang `postgresql+asyncpg://`.
 
-## 4. 🔄 Bước 4: Đồng Bộ CORS Sau Khi Triển Khai
+Nếu dùng transaction pooler cổng 6543, backend hiện đặt `statement_cache_size=0`, `prepared_statement_cache_size=0` khi nhận diện Supabase/pooler URL. Vẫn cần kiểm tra driver/chế độ pooler thực tế nếu xuất hiện lỗi prepared statement.
 
-Sau khi Vercel cấp domain chính thức cho frontend (ví dụ `https://p-097-vinfast.vercel.app`):
-1. Mở Render Dashboard -> Chọn service `vinfast-ai-backend`.
-2. Vào mục **Environment** -> Cập nhật:
-   ```text
-   CORS_ORIGINS=https://p-097-vinfast.vercel.app,http://localhost:3000
-   ```
-3. Render sẽ tự động trigger deploy lại trong 30 giây để cập nhật chính sách bảo mật CORS.
+### Khởi tạo database demo mới
 
----
+Chạy `scripts/db/schema.sql`, rồi `scripts/db/seed.sql` qua SQL Editor. Đọc và kiểm tra trước khi chạy: seed là dữ liệu mẫu. Schema có `CREATE TYPE` nên không chạy lại toàn bộ trên database đã khởi tạo; database có dữ liệu cần migration được kiểm tra riêng.
 
-## 5. ✅ Bảng Kiểm Tra Sau Triển Khai (Checklist)
+Backend gọi `create_all` nhưng không tự nạp seed. Kiểm tra catalog bằng `/api/v1/vehicles`; `/health` không kiểm tra database. Chat dùng catalog Gold CSV, không tự nhận thay đổi giá trong PostgreSQL.
 
-- [x] **Supabase**: Bảng dữ liệu và giá xe, khuyến mãi, chi phí lăn bánh đã được nạp đầy đủ.
-- [ ] **Render**: Endpoint `https://<render-backend>/health` trả về `{"status":"ok","env":"production"}`.
-- [ ] **Render**: Truy cập `https://<render-backend>/docs` mở được tài liệu Swagger API.
-- [ ] **Vercel**: Giao diện website tải mượt mà tại `https://<vercel-domain>`.
-- [ ] **End-to-End**: Thử chat với AI Agent hoặc cấu hình dự toán xe trên giao diện Vercel, kiểm tra dữ liệu phản hồi mượt mà từ backend Render và Supabase.
+## 3. Backend Render
+
+### Blueprint
+
+1. Đẩy phiên bản cần triển khai lên repository.
+2. Render Dashboard → **New Blueprint**, chọn repository và branch.
+3. Render đọc `render.yaml` tại thư mục gốc, build Dockerfile, health check `/health`.
+4. Điền biến `sync: false`, kiểm tra provider/model trong Environment.
+
+Blueprint đặt `APP_ENV=production`, `LLM_PROVIDER=google`, region Singapore, plan `free`. Điều chỉnh plan theo nhu cầu. Tham khảo [Render Blueprint reference](https://render.com/docs/blueprint-spec).
+
+### Web Service thủ công
+
+Chọn runtime **Docker**, Dockerfile `./Dockerfile`, build context thư mục gốc, health check `/health`. Không đặt root directory thành `frontend`. Docker CMD bind `0.0.0.0`, dùng `${PORT:-8000}`; Render cung cấp `PORT`.
+
+| Biến | Giá trị / mục đích |
+| --- | --- |
+| `APP_ENV` | `production` |
+| `APP_NAME` | `AutoQuote AI` |
+| `DATABASE_URL` | Connection string database của bạn |
+| `LLM_PROVIDER` | `google` hoặc `openai`; nên chọn rõ khi có cả hai key |
+| `MODEL_NAME` | OpenAI chat, ví dụ `gpt-4o-mini` |
+| `GOOGLE_MODEL_NAME` | Model Google chat có quyền truy cập |
+| `LLM_TEMPERATURE` | `0.0` |
+| `OPENAI_API_KEY` | Key RAG và OpenAI chat nếu chọn OpenAI |
+| `GOOGLE_API_KEY` | Key Google nếu chọn Google chat |
+| `CORS_ORIGINS` | Ví dụ `https://<frontend-domain>` |
+
+CORS origin không kèm `/api/v1` hoặc dấu `/` cuối; không dùng `*` khi middleware bật credentials. Proxy Next.js gọi server-to-server không chịu CORS; CORS áp dụng khi browser gọi trực tiếp backend.
+
+`auto` ưu tiên OpenAI rồi Google theo kiểm tra key sơ bộ, không chuyển provider khi API lỗi. Dùng `google` rõ ràng khi OpenAI key chỉ phục vụ RAG. Restart/redeploy sau khi đổi biến vì settings/client được cache. Model chat đổi qua environment, không cần sửa Python.
+
+Docker image chứa `src/`, `dataset/`; cần `dataset/gold/vinfast_embeddings.jsonl` và `dataset/gold/rdb_schema/`. RAG không dùng ChromaDB/Pinecone. Các tài nguyên fallback trong `data/vinfast_agent` không được Dockerfile copy; kiểm thử riêng web lookup nếu cần luồng này.
+
+Lưu URL thực tế Render cấp, ví dụ `https://<backend-service>.onrender.com`.
+
+## 4. Frontend Vercel
+
+1. Import repository; **Root Directory** = `frontend`, framework **Next.js**.
+2. Build bằng `npm run build`, cài dependencies từ lockfile bằng `npm ci`.
+3. Đặt biến sau cho Production; nếu dùng Preview, đặt backend phù hợp cho Preview.
+
+```dotenv
+BACKEND_URL=https://<backend-service>.onrender.com
+```
+
+`BACKEND_URL` là biến server-side, không kèm `/api/v1`. `frontend/app/api/chat/route.ts` và `vehicles/route.ts` tự thêm prefix. Hai proxy này không dùng `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_BACKEND_URL`. Biến Supabase public trong mẫu frontend chưa nối vào luồng hiện tại; database được truy cập qua backend.
+
+Deploy và lưu domain thực tế. Đổi biến môi trường cần deployment mới theo [Vercel environment variables](https://vercel.com/docs/environment-variables). Cập nhật `CORS_ORIGINS` trên Render bằng origin frontend rồi redeploy backend.
+
+## 5. Kiểm tra sau triển khai
+
+Thay placeholder bằng domain thực tế:
+
+```bash
+curl https://<backend-service>.onrender.com/health
+curl https://<backend-service>.onrender.com/api/v1/vehicles
+curl https://<frontend-domain>/api/vehicles
+```
+
+- Health trả `status=ok`, `env=production`: chỉ là liveness; startup có thể bắt lỗi database rồi tiếp tục chạy.
+- `/docs` mở Swagger; `/api/v1/vehicles` trả catalog đã seed để kiểm tra database.
+- `/api/vehicles` trên Vercel trả catalog để kiểm tra proxy và `BACKEND_URL`.
+- Mở configurator, chọn xe, chat hỏi giá/phí để kiểm tra công cụ cấu trúc.
+- Chat hỏi kiến thức sạc/bảo hành để kiểm tra RAG; xem log để xác nhận không có lỗi embedding.
+- Dashboard vẫn là mock; URL PDF placeholder không chứng minh xuất PDF thành công.
+
+## 6. Xử lý lỗi và vận hành
+
+| Triệu chứng | Kiểm tra |
+| --- | --- |
+| Health OK, catalog lỗi | Database URL, kết nối/pooler, schema/seed, log startup |
+| Chat lỗi key/model | Provider, tên model, quyền truy cập, quota tài khoản |
+| Gemini chat được, RAG lỗi | OpenAI key và corpus Gold; embedding cố định `text-embedding-3-small` |
+| Proxy Vercel lỗi | Backend URL không kèm prefix, backend truy cập được, deployment đã nhận biến mới |
+| Prepared statement lỗi | Chế độ pooler, cấu hình cache `src/db.py`, driver đang cài |
+| Giá chat khác configurator | Gold CSV, PostgreSQL và dữ liệu/phí local frontend chưa đồng bộ |
+
+LangGraph checkpoint ở bộ nhớ tiến trình: restart mất hội thoại, các instance không chia sẻ trạng thái. Pool backend hiện có `10` kết nối và tối đa `20` kết nối vượt pool mỗi tiến trình; cân đối số instance với giới hạn database. Không dùng filesystem container làm nơi lưu dữ liệu bền vững.
