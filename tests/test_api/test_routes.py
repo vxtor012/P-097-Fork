@@ -17,6 +17,8 @@ async def test_chat_empty_message(client):
 
 @pytest.mark.asyncio
 async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
+    from contextlib import nullcontext
+
     from src.api import routes
 
     class FakeAgent:
@@ -34,6 +36,7 @@ async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
             return {"answer": "Giá theo catalog là 699 triệu đồng."}
 
     monkeypatch.setattr(routes, "agent", FakeAgent())
+    monkeypatch.setattr(routes, "dataset_scope", nullcontext)
     response = await client.post(
         "/api/v1/chat",
         json={
@@ -56,6 +59,19 @@ async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
         "analysis": None,
         "session_id": "session-123",
     }
+
+
+@pytest.mark.asyncio
+async def test_chat_database_error_is_redacted(client, monkeypatch):
+    from src.api import routes
+
+    def unavailable(*args):
+        raise RuntimeError("postgresql://private-password@private-host")
+
+    monkeypatch.setattr(routes, "_invoke_agent", unavailable)
+    response = await client.post("/api/v1/chat", json={"message": "Giá xe?"})
+    assert response.status_code == 503
+    assert "private-password" not in response.text
 
 
 @pytest.mark.asyncio

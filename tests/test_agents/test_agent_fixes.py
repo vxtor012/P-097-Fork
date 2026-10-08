@@ -227,8 +227,7 @@ def test_promotion_values_pass_money_guard():
 
 def test_rag_category_is_enum_and_falls_back(monkeypatch):
     from src.agents.tools import rag
-    chunk = next(r for r in rag._load_records() if r["record_type"] == "chunk")
-    monkeypatch.setattr(rag, "_embed_query", lambda q: chunk["embedding"])
+    monkeypatch.setattr(rag, "_embed_query", lambda q: [1.0] + [0.0] * 1535)
     monkeypatch.setattr(rag, "_retrieve", lambda vec, top_k=5, category=None: [] if category else [{"id": "x"}])
     result = json.loads(rag.search_gold_knowledge.invoke({"query": "pin", "category": "pin_va_tram_sac"}))
     assert result["results"] == [{"id": "x"}]

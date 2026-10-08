@@ -8,6 +8,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.graph import agent
+from src.ai_data import dataset_scope
 from src.db import get_db
 from src.models.schemas import (
     ChatRequest,
@@ -41,12 +42,17 @@ PRICE_VERSION = "2025-Q4-v1"
 # ════════════════════════════════════════════════════════════
 # CHAT
 # ════════════════════════════════════════════════════════════
+def _invoke_agent(*args):
+    with dataset_scope():
+        return agent.invoke(*args)
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     session_id = request.session_id or str(uuid.uuid4())
     try:
         result = await asyncio.to_thread(
-            agent.invoke,
+            _invoke_agent,
             {
                 "question": request.message,
                 "messages": [HumanMessage(content=request.message)],
@@ -59,7 +65,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             session_id=session_id,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="AI chưa sẵn sàng; kiểm tra Supabase, dữ liệu AI và cấu hình provider.") from e
 
 
 # ════════════════════════════════════════════════════════════

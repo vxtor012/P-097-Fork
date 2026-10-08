@@ -8,22 +8,22 @@
 | --- | --- |
 | Configurator | Chọn cấu hình, xem xe 3D, dự toán; tải catalog qua `/api/vehicles`, có dữ liệu dự phòng frontend |
 | Chat AI | Proxy Next.js gọi FastAPI; LangGraph điều phối hội thoại và công cụ |
-| Giá, phí, ưu đãi trong chat | Công cụ Python tính từ catalog CSV trong `dataset/gold/rdb_schema` |
-| RAG | Tìm kiếm cosine trên vector JSONL có sẵn; OpenAI embedding câu hỏi |
+| Giá, phí, ưu đãi trong chat | Công cụ Python đọc snapshot catalog riêng trong Supabase `ai_data` |
+| RAG | Tìm kiếm cosine bằng pgvector trên Supabase; OpenAI embedding câu hỏi |
 | API nghiệp vụ | PostgreSQL lưu giá xe, pin, phụ kiện, phí, khuyến mãi, leads, báo giá và tồn kho |
 | Duyệt báo giá | Backend cập nhật trạng thái duyệt/từ chối; frontend vẫn dùng mock |
 | Đăng nhập và dashboard | Đăng nhập demo và dữ liệu mock; chưa có xác thực backend hoàn chỉnh |
 | Xuất PDF | Endpoint placeholder trả URL; chưa tạo PDF thực tế |
 
-Configurator tính dự toán ở client. Chat đọc catalog Gold, API nghiệp vụ đọc PostgreSQL: các nguồn độc lập này cần được đồng bộ khi cập nhật bảng giá. Dữ liệu repository là snapshot, không bảo đảm giá hoặc ưu đãi theo thời gian thực.
+Configurator tính dự toán ở client. Chat đọc snapshot AI và API nghiệp vụ đọc bảng `public` trên cùng PostgreSQL. Hai nguồn có thể khác thời điểm cập nhật; quản trị viên kiểm tra nguồn trước khi thay bảng giá. Dữ liệu riêng không cần public vào repository.
 
 ## Kiến trúc
 
 ```text
 Browser → Next.js → proxy API → FastAPI
                                 ├─ LangGraph → OpenAI / Google chat
-                                │              ├─ Gold CSV catalog
-                                │              └─ Gold vectors + OpenAI Embeddings
+                                │              ├─ Supabase ai_data catalog
+                                │              └─ Supabase pgvector + OpenAI Embeddings
                                 └─ SQLAlchemy async → PostgreSQL
 ```
 
@@ -49,9 +49,11 @@ cp .env.example .env
 docker compose up -d postgres
 ```
 
-Điền key, chọn provider/model trong `.env`. URL database mẫu kết nối PostgreSQL local cổng 5432. Compose nạp `scripts/db/schema.sql` và `seed.sql` khi tạo volume database lần đầu; khởi động lại không nạp lại seed. Backend chỉ tạo bảng thiếu, không tự seed. SQLite chưa phù hợp với ORM PostgreSQL và dependencies hiện tại.
+Điền key, chọn provider/model trong `.env`. URL database mẫu kết nối PostgreSQL local cổng 5432. Compose tạo schema/catalog demo local khi tạo volume lần đầu. Để dùng dữ liệu riêng, kết nối Supabase và chuẩn bị schema/dữ liệu theo [guide nạp dữ liệu](docs/SUPABASE_DATA_IMPORT.md). Backend không tự import snapshot AI; SQLite không được hỗ trợ.
 
 ```bash
+python scripts/db/migrate_supabase.py upgrade
+# Chuẩn bị dữ liệu AI theo docs/SUPABASE_DATA_IMPORT.md trước khi thử chat.
 python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
@@ -80,7 +82,7 @@ docker compose up --build
 docker compose down
 ```
 
-Frontend cổng 3000, backend 8000, PostgreSQL 5432. Compose đặt database hostname `postgres`; frontend gọi `http://backend:8000`. Dùng `DOCKER_DATABASE_URL` nếu cần thay database container. Redis có trong Compose nhưng ứng dụng hiện chưa dùng. Compose nạp catalog; để có buyers/hội thoại/leads/quotes/tồn kho thống nhất, xem phần mock trong [guide triển khai và vận hành](docs/CLOUD_DEPLOYMENT.md).
+Frontend cổng 3000, backend 8000, PostgreSQL 5432. Compose đặt database hostname `postgres`; frontend gọi `http://backend:8000`. Dùng `DOCKER_DATABASE_URL` nếu cần thay database container. Redis có trong Compose nhưng ứng dụng hiện chưa dùng. AI cần snapshot đã nạp riêng. Xem [guide dữ liệu Supabase](docs/SUPABASE_DATA_IMPORT.md) để chuẩn bị dữ liệu và vận hành mock có chủ đích.
 
 ## Cấu hình AI trong `.env`
 
@@ -141,10 +143,11 @@ src/config.py            Cấu hình từ .env
 src/db.py, orm_models.py  PostgreSQL và ORM
 src/pipeline/            Crawl, chuẩn hóa, chia chunk, lọc
 frontend/                Next.js và proxy API
-dataset/gold/            Corpus RAG và catalog cấu trúc
-scripts/db/              Schema và seed SQL
+src/ai_data.py           Repository snapshot catalog và pgvector
+scripts/db/              Migration, import dữ liệu riêng, kiểm tra và mock
 tests/                   Kiểm thử backend, agent, pipeline
-docs/CLOUD_DEPLOYMENT.md  Cloud deploy
+docs/CLOUD_DEPLOYMENT.md  Deploy public
+docs/SUPABASE_DATA_IMPORT.md  Nạp/kiểm tra/rollback dữ liệu riêng
 ```
 
 ```bash
@@ -171,6 +174,7 @@ Xem [cloud deploy](docs/CLOUD_DEPLOYMENT.md) cho cấu hình Supabase, Render, V
 
 ## Tài liệu triển khai và vận hành
 
-[Một guide duy nhất: đưa dự án lên public và vận hành](docs/CLOUD_DEPLOYMENT.md). Làm tuần tự từ Git/Gold, Supabase, Render, Vercel đến URL Production ai cũng truy cập được; backup, mock data, cập nhật và xử lý lỗi nằm trong cùng file.
+- [Deploy public](docs/CLOUD_DEPLOYMENT.md): kết nối Supabase đã sẵn sàng, deploy Render/Vercel và kiểm tra URL public; không đưa dữ liệu riêng vào image.
+- [Nạp dữ liệu Supabase](docs/SUPABASE_DATA_IMPORT.md): backup, migration, nhập catalog/embedding riêng, kiểm tra và rollback phiên bản.
 
-Schema/seed đã được sửa và migration nâng cấp được lưu trong `supabase/migrations/`. Database cũ chạy `python scripts/db/migrate_supabase.py upgrade`, sau đó `check`; database trống dùng `bootstrap` (thêm `--seed` chỉ cho demo). Không chạy lại seed để cập nhật giá. Bảng chỉ truy cập qua backend; RLS bật và browser roles không có quyền truy cập trực tiếp.
+Database hiện có chạy `upgrade`, database trống chạy `bootstrap`. Không dùng seed để cập nhật dữ liệu thật. Import AI giữ nguyên bảng nghiệp vụ và nội dung pipeline; bảng riêng không mở cho browser roles.

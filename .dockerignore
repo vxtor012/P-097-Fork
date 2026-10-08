@@ -16,9 +16,8 @@ presentation/
 eval/
 tests/
 frontend/
-dataset/bronze/
-dataset/pdf/
-dataset/benchmark/
+dataset/
+data/
 .ai-log/
 .codex/
 .cursor/

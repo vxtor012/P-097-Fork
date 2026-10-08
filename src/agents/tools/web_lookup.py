@@ -1,16 +1,15 @@
-"""Allowlisted web lookup for vehicle details absent from the local catalog."""
+"""Allowlisted web lookup for vehicle details absent from the Supabase catalog."""
 
 import json
 import re
 import unicodedata
 import urllib.request
 from html.parser import HTMLParser
-from pathlib import Path
 from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 
-DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "vinfast_agent"
+from src import ai_data
 
 MAX_RESPONSE_BYTES = 1_500_000
 SKIP_TAGS = {"script", "style", "nav", "header", "footer", "noscript", "form", "svg"}
@@ -52,9 +51,7 @@ class _TextParser(HTMLParser):
 
 
 def _load_source_config() -> dict:
-    path = DATA_DIR / "web_sources.json"
-    with path.open(encoding="utf-8") as source:
-        return json.load(source)
+    return ai_data.web_sources()
 
 
 def _host_allowed(url: str, domains: list[str]) -> bool:
@@ -105,6 +102,7 @@ def _fetch_page(url: str, domains: list[str]) -> str:
 
 
 @tool
+@ai_data.pinned
 def lookup_official_web(vehicle: str, topic: str) -> str:
     """Look up allowlisted VinFast/dealer pages for details missing from catalog, such as interior materials.
 
@@ -127,8 +125,8 @@ def lookup_official_web(vehicle: str, topic: str) -> str:
 
     try:
         config = _load_source_config()
-    except (OSError, json.JSONDecodeError) as exc:
-        result["errors"].append(f"Không đọc được cấu hình nguồn web ({DATA_DIR / 'web_sources.json'}): {type(exc).__name__}.")
+    except Exception as exc:
+        result["errors"].append(f"Không đọc được cấu hình nguồn web trên Supabase: {type(exc).__name__}.")
         return json.dumps(result, ensure_ascii=False)
 
     domains = config.get("allowed_domains", [])

@@ -29,10 +29,8 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
 
     # Database
-    database_url: str = "sqlite:///./data/app.db"
+    database_url: str = "postgresql+asyncpg://vinfast:vinfast123@localhost:5432/vinfast_ai"
 
-    # Vector Store
-    chroma_persist_dir: str = "./data/chroma"
 
 
 @lru_cache

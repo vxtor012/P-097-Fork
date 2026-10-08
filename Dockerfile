@@ -25,11 +25,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Copy application source and data assets with correct ownership
+# Deploy application code only. Private data is managed outside the image.
 COPY --chown=appuser:appuser src/ ./src/
-COPY --chown=appuser:appuser dataset/ ./dataset/
 
-RUN mkdir -p /app/data && chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app
 
 USER appuser
 

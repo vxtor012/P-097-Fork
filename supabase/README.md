@@ -30,8 +30,17 @@ Public Supabase browser roles have no table privileges or RLS policies. A custom
 backend role needs a reviewed access configuration before use. RLS does not
 replace authentication and authorization in FastAPI.
 
-See the [single public deployment and operations guide](../docs/CLOUD_DEPLOYMENT.md) for database setup, backup, restore, and hosting.
+See [public deployment](../docs/CLOUD_DEPLOYMENT.md) for hosting and
+[private data import](../docs/SUPABASE_DATA_IMPORT.md) for backup, schema setup,
+import and rollback. Deployment does not run seed, pipeline or import.
 
-## Dữ liệu demo nghiệp vụ
+## Private AI snapshots
 
-`bootstrap --seed` tạo catalog demo và bộ buyer/chat/lead/quote/tồn kho liên kết. Với DB đã có catalog, dùng `scripts/db/mock_data.py plan/apply/check`; không chạy lại `seed.sql`. Quy trình mock nằm trong phần B của [guide duy nhất](../docs/CLOUD_DEPLOYMENT.md). Migration schema không tự nạp hoặc sửa mock.
+`add_private_ai_data` installs pgvector and creates the private `ai_data` schema.
+The backend reads catalog snapshots and searches vector records in PostgreSQL.
+Run `python scripts/db/import_ai_data.py --help` from the administrator machine.
+Source CSV/JSONL files remain private and are not included in Git or Docker.
+
+AI import does not rewrite `public` prices/promotions or business/demo records.
+Mock operations remain explicit via `scripts/db/mock_data.py`; migrations do not
+implicitly regenerate data.

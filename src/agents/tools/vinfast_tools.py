@@ -1,20 +1,15 @@
 """Deterministic VinFast catalog, ownership-cost, and promotion tools."""
 
-import csv
 import json
 import re
 import unicodedata
 from datetime import date
-from functools import lru_cache
-from pathlib import Path
 from typing import Literal
 
 from langchain_core.tools import tool
 
+from src import ai_data
 from src.agents.tools.rag import search_gold_knowledge
-
-GOLD_DIR = Path(__file__).resolve().parents[3] / "dataset" / "gold"
-RELATIONAL_DIR = GOLD_DIR / "rdb_schema"
 
 
 def _normalize(text: str | None) -> str:
@@ -29,15 +24,7 @@ def _normalize(text: str | None) -> str:
 
 
 def _read_csv(name: str) -> list[dict[str, str]]:
-    path = RELATIONAL_DIR / name
-    if not path.is_file():
-        alt_path = Path(__file__).resolve().parents[3] / "data" / "vinfast_agent" / "relational" / name
-        if alt_path.is_file():
-            path = alt_path
-        else:
-            raise RuntimeError(f"Thiếu dữ liệu catalog: {path}")
-    with path.open(encoding="utf-8-sig", newline="") as source:
-        return list(csv.DictReader(source))
+    return ai_data.catalog_rows(name)
 
 
 def _format_vnd(amount: int | float) -> str:
@@ -65,7 +52,6 @@ def _province_key(name: str | None) -> str:
     return PROVINCE_ALIASES.get(key, key)
 
 
-@lru_cache(maxsize=1)
 def _provinces() -> list[dict[str, str]]:
     return _read_csv("provinces.csv")
 
@@ -136,14 +122,11 @@ def _voucher_values(promotion: dict) -> list[dict]:
 
 def _load_promotions() -> list[dict] | None:
     """None nghĩa là CHƯA có dữ liệu ưu đãi (khác với 'không có ưu đãi')."""
-    if not (RELATIONAL_DIR / "promotions.csv").is_file():
-        return None
     rows = _read_csv("promotions.csv")
     needed = {"promo_name", "benefit_type", "valid_from", "valid_to", "audience", "is_active"}
     return rows if not rows or needed <= set(rows[0]) else None
 
 
-@lru_cache(maxsize=1)
 def _load_data() -> tuple[list[dict], list[dict], list[dict] | None]:
     cars = {
         row["car_id"]: row
@@ -238,6 +221,7 @@ def _resolve(queries: list[str] | None) -> tuple[list[dict], list[str]]:
 
 
 @tool
+@ai_data.pinned
 def search_vehicles(
     vehicle_queries: list[str] | None = None,
     fields: list[VehicleField] | None = None,
@@ -301,11 +285,12 @@ def search_vehicles(
     return json.dumps({
         "matched_versions": output,
         "notes": list(dict.fromkeys(notes)),
-        "catalog_source": "dataset/gold/rdb_schema",
+        "catalog_source": ai_data.provenance(),
     }, ensure_ascii=False)
 
 
 @tool
+@ai_data.pinned
 def lookup_car_color_options(vehicle_queries: list[str]) -> str:
     """Look up exterior colors and color surcharges for VinFast trims.
 
@@ -334,11 +319,12 @@ def lookup_car_color_options(vehicle_queries: list[str]) -> str:
         "color_options": available,
         "unavailable_color_options": unavailable,
         "notes": notes,
-        "catalog_source": "dataset/gold/rdb_schema/vehicle_colors.csv",
+        "catalog_source": ai_data.provenance("vehicle_colors"),
     }, ensure_ascii=False)
 
 
 @tool
+@ai_data.pinned
 def lookup_province_fees(province: str, vehicle_queries: list[str] | None = None) -> str:
     """Look up vehicle registration fees by Vietnamese province or city.
 
@@ -382,13 +368,14 @@ def lookup_province_fees(province: str, vehicle_queries: list[str] | None = None
         "fees": fees,
         "car_estimates": estimates,
         "notes": [f"Không tìm thấy xe: {query}" for query in unmatched],
-        "catalog_source": "dataset/gold/rdb_schema/provinces.csv",
+        "catalog_source": ai_data.provenance("provinces"),
     }, ensure_ascii=False)
 
 
 @tool
+@ai_data.pinned
 def calculate_vehicle_tco(vehicle_queries: list[str], location: str, years: int | None = None) -> str:
-    """Calculate known purchase and ownership costs from the local VinFast fee tables.
+    """Calculate known purchase and ownership costs from the Supabase VinFast fee tables.
 
     Both location and years must come from the user; ask them if missing instead of assuming.
 
@@ -445,6 +432,7 @@ def calculate_vehicle_tco(vehicle_queries: list[str], location: str, years: int 
 
 
 @tool
+@ai_data.pinned
 def get_eligible_promotions(
     vehicle_queries: list[str] | None = None,
     vinclub_tier: VinclubTier | None = None,
