@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
+import Link from "next/link";
 import { PriceQuoteData, InstallmentData } from "@/types/chat";
 import { formatVND } from "@/lib/format";
-import { Gift, Info, CheckCircle2, FileDown } from "lucide-react";
+import { Gift, Info, CheckCircle2, FileDown, Loader2 } from "lucide-react";
 
 type QuoteData = PriceQuoteData | InstallmentData;
 
@@ -17,6 +19,50 @@ export function QuoteSidebar({ data }: { data: QuoteData }) {
 }
 
 function PriceQuoteSidebar({ data }: { data: PriceQuoteData }) {
+  const [downloading, setDownloading] = useState(false);
+
+  const exportPdf = async () => {
+    try {
+      setDownloading(true);
+      const res = await fetch("/api/quote/preview-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: data.model,
+          version: data.version,
+          color: data.color,
+          battery: data.battery_cost > 0 ? "buy" : "rent",
+          province: data.province,
+          final_price: data.final_price,
+          price_version: data.price_version,
+          price_snapshot: {
+            base_price: data.base_price,
+            battery_cost: data.battery_cost,
+            accessories: data.accessories,
+            rolling_costs: data.rolling_costs,
+            promotions: data.promotions,
+            final_price: data.final_price,
+          },
+        }),
+      });
+
+      if (!res.ok) throw new Error("Lỗi tải PDF");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `VinFast_BaoGia_${data.model}_${data.version}.pdf`.replace(/\s+/g, "_");
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch {
+      alert("Lỗi khi tải PDF báo giá.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-5 py-4 border-b bg-blue-600 text-white">
@@ -79,13 +125,20 @@ function PriceQuoteSidebar({ data }: { data: PriceQuoteData }) {
       </div>
 
       <div className="px-5 py-4 border-t space-y-2">
-        <button className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors flex items-center justify-center gap-2">
+        <Link
+          href={`/configurator/quote?model=${data.model}&version=${data.version}&color=${data.color}&battery=${data.battery_cost > 0 ? "buy" : "rent"}&province=${data.province}`}
+          className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors flex items-center justify-center gap-2"
+        >
           <CheckCircle2 size={15} />
           <span>Yêu cầu báo giá chính thức</span>
-        </button>
-        <button className="w-full py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium text-sm transition-colors flex items-center justify-center gap-2">
-          <FileDown size={15} />
-          <span>Xuất PDF</span>
+        </Link>
+        <button
+          onClick={exportPdf}
+          disabled={downloading}
+          className="w-full py-2.5 rounded-xl border border-gray-300 hover:bg-gray-50 text-gray-700 font-medium text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+        >
+          {downloading ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
+          <span>{downloading ? "Đang tạo PDF..." : "Xuất PDF"}</span>
         </button>
       </div>
     </div>

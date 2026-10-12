@@ -13,7 +13,7 @@ export interface BuyerInfo {
 interface Props {
   isOpen:    boolean;
   onClose:   () => void;
-  onConfirm: (info: BuyerInfo) => void;
+  onConfirm: (info: BuyerInfo) => void | Promise<void>;
   finalPrice:number;
   carConfig: string; // "VF6 Plus · Trắng Tinh Khôi · Hà Nội"
 }
@@ -26,6 +26,7 @@ export function BuyerIdentityModal({
   });
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -35,18 +36,22 @@ export function BuyerIdentityModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // Giả lập gửi API
-    await new Promise((r) => setTimeout(r, 800));
-    setLoading(false);
-    setSubmitted(true);
-    // Sau 1.5s đóng modal
-    setTimeout(() => {
-      onConfirm(form);
-      onClose();
-      setSubmitted(false);
-      setForm({ name: "", phone: "", province: "", note: "" });
-    }, 1500);
+    setError(null);
+    try {
+      await onConfirm(form);
+      setLoading(false);
+      setSubmitted(true);
+      setTimeout(() => {
+        onClose();
+        setSubmitted(false);
+        setForm({ name: "", phone: "", province: "", note: "" });
+      }, 1500);
+    } catch (err: any) {
+      setLoading(false);
+      setError(err?.message || "Không thể gửi yêu cầu báo giá. Vui lòng thử lại!");
+    }
   };
+
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -177,6 +182,10 @@ export function BuyerIdentityModal({
               <Lock size={12} className="shrink-0 text-gray-400" />
               <span>Thông tin chỉ dùng để tư vấn viên liên hệ. Không chia sẻ bên thứ 3.</span>
             </p>
+
+            {error && (
+              <p className="rounded-xl bg-red-50 p-3 text-xs text-red-600">{error}</p>
+            )}
 
             {/* Buttons */}
             <div className="flex gap-3 pt-1">

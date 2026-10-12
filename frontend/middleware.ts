@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 // Routes cần login và role tương ứng
 const PROTECTED: Record<string, string[]> = {
-  "/seller":    ["seller"],
-  "/warehouse": ["warehouse", "warehouse_manager"],
+  "/seller":    ["seller", "admin"],
+  "/warehouse": ["warehouse", "warehouse_manager", "admin"],
 };
 
 function getRole(req: NextRequest): string | null {

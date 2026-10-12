@@ -1,8 +1,13 @@
 import asyncio
+import os
+import re
+import unicodedata
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from langchain_core.messages import HumanMessage
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,26 +22,117 @@ from src.models.schemas import (
     InventoryUpdate,
     LeadCreate,
     LeadUpdate,
+    LoginRequest,
+    LoginResponse,
     PricingResponse,
     PromotionCreate,
+    PromotionUpdate,
     QuoteApprove,
     QuoteCreate,
 )
 from src.orm_models import (
     Accessory,
     BatteryPrice,
+    Dealer,
     Inventory,
     Lead,
     Promotion,
     Quote,
     QuoteStatus,
     RollingCost,
+    User,
     VehiclePrice,
 )
+from src.services.auth import (
+    create_access_token,
+    get_current_user,
+    verify_password,
+)
+from src.services.pdf_generator import generate_quote_pdf
 
 router = APIRouter()
 
 PRICE_VERSION = "2025-Q4-v1"
+
+
+# ════════════════════════════════════════════════════════════
+# AUTHENTICATION
+# ════════════════════════════════════════════════════════════
+@router.post("/auth/login", response_model=LoginResponse)
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    email = body.email.strip().lower()
+    result = await db.execute(select(User).where(User.email.ilike(email)))
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(body.password, user.hashed_pw):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Email hoặc mật khẩu không chính xác",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tài khoản đã bị tạm khóa. Vui lòng liên hệ quản trị viên.",
+        )
+
+    dealer_name = None
+    if user.dealer_id:
+        d_res = await db.execute(select(Dealer).where(Dealer.id == user.dealer_id))
+        dealer = d_res.scalar_one_or_none()
+        if dealer:
+            dealer_name = dealer.name
+
+    role_str = user.role.value if hasattr(user.role, "value") else str(user.role)
+
+    token = create_access_token({
+        "sub": str(user.id),
+        "email": user.email,
+        "role": role_str,
+    })
+
+    return LoginResponse(
+        token=token,
+        user={
+            "id": str(user.id),
+            "name": user.name,
+            "email": user.email,
+            "role": role_str,
+            "dealerId": str(user.dealer_id) if user.dealer_id else None,
+            "dealer": dealer_name,
+            "branchId": None,
+            "storeIds": None,
+        },
+    )
+
+
+@router.get("/auth/me")
+async def get_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    dealer_name = None
+    if current_user.dealer_id:
+        d_res = await db.execute(select(Dealer).where(Dealer.id == current_user.dealer_id))
+        dealer = d_res.scalar_one_or_none()
+        if dealer:
+            dealer_name = dealer.name
+
+    role_str = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+
+    return {
+        "user": {
+            "id": str(current_user.id),
+            "name": current_user.name,
+            "email": current_user.email,
+            "role": role_str,
+            "dealerId": str(current_user.dealer_id) if current_user.dealer_id else None,
+            "dealer": dealer_name,
+            "branchId": None,
+            "storeIds": None,
+        }
+    }
+
 
 
 # ════════════════════════════════════════════════════════════
@@ -418,13 +514,124 @@ async def approve_quote(
 
 
 @router.post("/quote/export-pdf")
-async def export_pdf(quote_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Quote).where(Quote.id == quote_id))
-    quote  = result.scalar_one_or_none()
+async def export_pdf(
+    quote_id: str | None = None,
+    payload: dict | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    qid = quote_id or (payload.get("quote_id") if payload else None)
+    if not qid:
+        raise HTTPException(400, "Thiếu mã quote_id")
+
+    result = await db.execute(select(Quote).where(Quote.id == qid))
+    quote = result.scalar_one_or_none()
     if not quote:
         raise HTTPException(404, "Không tìm thấy báo giá")
-    # TODO: tích hợp ReportLab/WeasyPrint
-    return {"pdf_url": f"/static/quotes/{quote_id}.pdf", "message": "PDF đang được tạo"}
+
+    quote_dict = {
+        "id": str(quote.id),
+        "model": quote.model,
+        "version": quote.version,
+        "color": quote.color,
+        "province": quote.province,
+        "buyer_name": quote.buyer_name,
+        "buyer_phone": quote.buyer_phone,
+        "battery": quote.battery,
+        "final_price": quote.final_price,
+        "price_version": quote.price_version,
+        "price_snapshot": quote.price_snapshot,
+        "seller_note": quote.seller_note,
+        "status": quote.status.value if quote.status else "pending",
+        "created_at": quote.created_at,
+    }
+
+    pdf_bytes = generate_quote_pdf(quote_dict)
+    filename = f"VinFast_BaoGia_{str(quote.id)[:8].upper()}.pdf"
+
+    # Save to static dir if available
+    try:
+        os.makedirs("static/quotes", exist_ok=True)
+        with open(f"static/quotes/{quote.id}.pdf", "wb") as f:
+            f.write(pdf_bytes)
+    except Exception:
+        pass
+
+    return {
+        "pdf_url": f"/api/v1/quotes/{quote.id}/pdf",
+        "download_url": f"/api/quotes/{quote.id}/pdf",
+        "filename": filename,
+        "status": "ready",
+        "message": "PDF đã được tạo thành công",
+    }
+
+
+@router.get("/quotes/{quote_id}/pdf")
+async def get_quote_pdf(
+    quote_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Quote).where(Quote.id == quote_id))
+    quote = result.scalar_one_or_none()
+    if not quote:
+        raise HTTPException(404, "Không tìm thấy báo giá")
+
+    quote_dict = {
+        "id": str(quote.id),
+        "model": quote.model,
+        "version": quote.version,
+        "color": quote.color,
+        "province": quote.province,
+        "buyer_name": quote.buyer_name,
+        "buyer_phone": quote.buyer_phone,
+        "battery": quote.battery,
+        "final_price": quote.final_price,
+        "price_version": quote.price_version,
+        "price_snapshot": quote.price_snapshot,
+        "seller_note": quote.seller_note,
+        "status": quote.status.value if quote.status else "pending",
+        "created_at": quote.created_at,
+    }
+
+    pdf_bytes = generate_quote_pdf(quote_dict)
+    filename = f"VinFast_BaoGia_{str(quote.id)[:8].upper()}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
+@router.post("/quote/preview-pdf")
+async def preview_pdf(payload: dict):
+    """
+    Direct preview/export from configurator state without requiring a prior saved quote.
+    """
+    pdf_bytes = generate_quote_pdf(payload)
+
+    raw_model = str(payload.get("model", "VF"))
+    raw_ver = str(payload.get("version", "Standard"))
+
+    def _clean(s: str) -> str:
+        norm = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"[^\w\-.]+", "_", norm).strip("_")
+
+    model = _clean(raw_model) or "VF"
+    version = _clean(raw_ver) or "Standard"
+    filename = f"VinFast_BaoGia_{model}_{version}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 
 
 # ════════════════════════════════════════════════════════════
@@ -487,7 +694,7 @@ async def create_promotion(
 @router.patch("/promotions/{promo_id}")
 async def update_promotion(
     promo_id: str,
-    body:     PromotionCreate,
+    body:     PromotionUpdate,
     db:       AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(Promotion).where(Promotion.id == promo_id))
@@ -495,9 +702,16 @@ async def update_promotion(
     if not promo:
         raise HTTPException(404, "Không tìm thấy khuyến mãi")
 
-    for k, v in body.model_dump(exclude_none=True).items():
+    data = body.model_dump(exclude_none=True)
+    if "start_date" in data:
+        data["start_date"] = datetime.fromisoformat(data["start_date"])
+    if "end_date" in data:
+        data["end_date"] = datetime.fromisoformat(data["end_date"])
+
+    for k, v in data.items():
         setattr(promo, k, v)
     return {"message": "Đã cập nhật"}
+
 
 
 @router.delete("/promotions/{promo_id}")
