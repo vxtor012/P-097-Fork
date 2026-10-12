@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 
 export interface ChatMessage {
   id: string;
@@ -35,9 +35,12 @@ function getSessionId() {
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const pending = useRef(false);
 
   const sendMessage = useCallback(async (content: string, vehicleContext?: VehicleContext) => {
-    const sessionId = getSessionId();
+    content = content.trim();
+    if (!content || pending.current) return;
+    pending.current = true;
 
     setMessages((p) => [
       ...p,
@@ -45,37 +48,35 @@ export function useChat() {
     ]);
     setIsLoading(true);
 
-    const aiId = makeId();
-    setMessages((p) => [
-      ...p,
-      { id: aiId, role: "assistant", content: "", timestamp: new Date().toISOString() },
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 65_000);
+    const appendReply = (reply: string) => setMessages((prev) => [
+      ...prev,
+      { id: makeId(), role: "assistant", content: reply, timestamp: new Date().toISOString() },
     ]);
 
     try {
+      const sessionId = getSessionId();
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: sessionId, message: content, vehicle_context: vehicleContext }),
+        signal: controller.signal,
       });
 
-      if (!res.ok) throw new Error("failed");
-      const payload: { response?: string } = await res.json();
-      setMessages((prev) =>
-        prev.map((message) =>
-          message.id === aiId
-            ? { ...message, content: payload.response || "Mình chưa nhận được câu trả lời. Vui lòng thử lại." }
-            : message
-        )
-      );
-    } catch {
-      setMessages((p) =>
-        p.map((m) =>
-          m.id === aiId
-            ? { ...m, content: "Xin lỗi, có lỗi xảy ra. Vui lòng thử lại." }
-            : m
-        )
-      );
+      const payload: { response?: string; error?: string } = await res.json();
+      if (!res.ok) throw new Error(payload.error || "AI chưa sẵn sàng. Vui lòng thử lại.");
+      appendReply(payload.response?.trim() || "Mình chưa nhận được câu trả lời. Vui lòng thử lại.");
+    } catch (error) {
+      appendReply(controller.signal.aborted
+        ? "AI phản hồi quá lâu. Vui lòng thử lại sau ít phút."
+        : error instanceof Error && error.message !== "Failed to fetch"
+          && !(error instanceof SyntaxError)
+          ? error.message
+          : "Không thể kết nối AI. Vui lòng thử lại sau ít phút.");
     } finally {
+      clearTimeout(timeout);
+      pending.current = false;
       setIsLoading(false);
     }
   }, []);
