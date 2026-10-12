@@ -129,6 +129,18 @@ class PromotionCreate(BaseModel):
     end_date:       str
     is_active:      bool = True
 
+class PromotionUpdate(BaseModel):
+    name:           str | None = None
+    description:    str | None = None
+    model:          str | None = None
+    province:       str | None = None
+    discount_type:  str | None = None
+    discount_value: int | None = None
+    start_date:     str | None = None
+    end_date:       str | None = None
+    is_active:      bool | None = None
+
+
 class PromotionOut(BaseModel):
     id:             str
     name:           str

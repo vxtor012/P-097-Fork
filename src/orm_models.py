@@ -26,10 +26,12 @@ from src.db import Base
 
 # ── Enums ────────────────────────────────────────────────────
 class UserRole(enum.StrEnum):
-    buyer     = "buyer"
-    seller    = "seller"
-    warehouse = "warehouse"
-    admin     = "admin"
+    buyer             = "buyer"
+    seller            = "seller"
+    warehouse         = "warehouse"
+    warehouse_manager = "warehouse_manager"
+    admin             = "admin"
+
 
 class QuoteStatus(enum.StrEnum):
     pending  = "pending"

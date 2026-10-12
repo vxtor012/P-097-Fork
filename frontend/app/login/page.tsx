@@ -9,10 +9,10 @@ import { useAuthStore, ROLE_HOME } from "@/lib/auth-store";
 import { CarImage } from "@/components/shared/car-image";
 
 const DEMO = [
-  { label: "Nhân viên kinh doanh", email: "seller@abc.vn", pw: "123456" },
-  { label: "Thủ kho · Showroom Cầu Giấy", email: "warehouse@abc.vn", pw: "123456" },
-  { label: "Thủ kho · Showroom Long Biên", email: "warehouse2@abc.vn", pw: "123456" },
-  { label: "Quản lý kho đại lý", email: "manager@abc.vn", pw: "123456" },
+  { label: "Nhân viên kinh doanh · VinFast Mỹ Đình", email: "seller.mydinh@vinfast.vn", pw: "123456" },
+  { label: "Nhân viên kinh doanh · VinFast Quận 7", email: "seller.q7@vinfast.vn", pw: "123456" },
+  { label: "Thủ kho hệ thống · VinFast", email: "warehouse@vinfast.vn", pw: "123456" },
+  { label: "Quản trị viên toàn hệ thống", email: "admin@vinfast.vn", pw: "123456" },
 ];
 const SAFE_FROM = ["/seller/dashboard", "/warehouse/dashboard"];
 

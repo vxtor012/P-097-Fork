@@ -1,12 +1,58 @@
 "use client";
 
 import { useState } from "react";
+
+import Link from "next/link";
 import { PriceQuoteData } from "@/types/chat";
 import { formatVND } from "@/lib/format";
-import { ChevronDown, ChevronUp, FileText, CheckCircle, Gift, Info } from "lucide-react";
+import { ChevronDown, ChevronUp, FileText, CheckCircle, Gift, Info, Loader2 } from "lucide-react";
 
 export function PriceCard({ data }: { data: PriceQuoteData }) {
   const [open, setOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const exportPdf = async () => {
+    try {
+      setDownloading(true);
+      const res = await fetch("/api/quote/preview-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: data.model,
+          version: data.version,
+          color: data.color,
+          battery: data.battery_cost > 0 ? "buy" : "rent",
+          province: data.province,
+          final_price: data.final_price,
+          price_version: data.price_version,
+          price_snapshot: {
+            base_price: data.base_price,
+            battery_cost: data.battery_cost,
+            accessories: data.accessories,
+            rolling_costs: data.rolling_costs,
+            promotions: data.promotions,
+            final_price: data.final_price,
+          },
+        }),
+      });
+
+      if (!res.ok) throw new Error("Lỗi tải PDF");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `VinFast_BaoGia_${data.model}_${data.version}.pdf`.replace(/\s+/g, "_");
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch {
+      alert("Lỗi khi tải PDF báo giá.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
 
   return (
     <div className="w-80 bg-white rounded-2xl border shadow-md overflow-hidden text-sm">
@@ -98,12 +144,20 @@ export function PriceCard({ data }: { data: PriceQuoteData }) {
 
       {/* Actions */}
       <div className="px-4 pb-4 flex gap-2 border-t pt-3">
-        <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-          <FileText size={13} /> Xuất PDF
+        <button
+          onClick={exportPdf}
+          disabled={downloading}
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
+        >
+          {downloading ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />}
+          <span>{downloading ? "Đang tạo..." : "Xuất PDF"}</span>
         </button>
-        <button className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors">
+        <Link
+          href={`/configurator/quote?model=${data.model}&version=${data.version}&color=${data.color}&battery=${data.battery_cost > 0 ? "buy" : "rent"}&province=${data.province}`}
+          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
+        >
           <CheckCircle size={13} /> Báo giá chính thức
-        </button>
+        </Link>
       </div>
     </div>
   );
