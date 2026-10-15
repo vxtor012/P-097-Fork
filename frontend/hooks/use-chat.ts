@@ -46,12 +46,34 @@ export function useChat() {
     const id = getSessionId();
     if (!/^[0-9a-f-]{36}$/i.test(id)) return;
     const controller = new AbortController();
-    fetch('/api/chat/history?session_id=' + encodeURIComponent(id), { signal: controller.signal, cache: 'no-store' })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => {
-        if (data?.messages && !pending.current) setMessages((current) => current.length ? current :
-          data.messages.map((m: { role: 'user' | 'assistant'; content: string }, index: number) => ({ ...m, id: id + index, timestamp: '' })));
-      }).catch(() => {});
+
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/chat/history?session_id=" + encodeURIComponent(id), {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data?.messages && !pending.current) {
+          setMessages((current) =>
+            current.length
+              ? current
+              : data.messages.map(
+                  (m: { role: "user" | "assistant"; content: string }, index: number) => ({
+                    ...m,
+                    id: id + index,
+                    timestamp: "",
+                  })
+                )
+          );
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === "AbortError") return;
+      }
+    }
+
+    void loadHistory();
     return () => controller.abort();
   }, []);
 
