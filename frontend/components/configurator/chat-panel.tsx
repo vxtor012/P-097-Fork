@@ -4,14 +4,13 @@ import { useRef, useEffect, useState } from "react";
 import { Send, Bot, Car } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
 import { useConfigurator } from "@/hooks/use-configurator";
-import { VEHICLES } from "@/lib/vehicle-data";
 import { formatVND } from "@/lib/format";
 import ReactMarkdown from "react-markdown";
 
 const QUICK_ASKS = [
   "Tư vấn thêm về dòng xe này",
   "So sánh mua pin vs thuê pin",
-  "Tính trả góp 60 tháng VPBank",
+  "Tôi muốn dự toán trả góp",
   "Đại lý nào gần nhất?",
   "Chính sách bảo hành như thế nào?",
 ];
@@ -23,15 +22,15 @@ interface Props {
 
 export function ChatPanel({ chat, configurator }: Props) {
   const { messages, sendMessage, isLoading } = chat;
-  const { pricing, config } = configurator;
-  const vehicle = VEHICLES[config.model];
+  const { pricing, config, vehicle } = configurator;
   const vehicleContext = {
     model: vehicle.label,
     version: pricing.version.label,
     color: pricing.color.label,
     province: pricing.province.label,
     battery: config.battery,
-    accessories: pricing.accList.map((accessory) => accessory.label),
+    accessories: config.accessories,
+    dealer_id: config.dealerId || undefined,
   };
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -43,7 +42,7 @@ export function ChatPanel({ chat, configurator }: Props) {
   const handleSend = () => {
     const t = input.trim();
     if (!t || isLoading) return;
-    sendMessage(t, vehicleContext);
+    sendMessage(t, vehicleContext, (update) => configurator.applyConfiguration(update, config));
     setInput("");
   };
 
@@ -68,7 +67,7 @@ export function ChatPanel({ chat, configurator }: Props) {
           </div>
           <span className="ml-auto flex items-center gap-1 text-xs text-green-600">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            Online
+            Hỗ trợ cấu hình
           </span>
         </div>
 
@@ -103,7 +102,8 @@ export function ChatPanel({ chat, configurator }: Props) {
             {QUICK_ASKS.map((q) => (
               <button
                 key={q}
-                onClick={() => sendMessage(q, vehicleContext)}
+                disabled={isLoading}
+                onClick={() => sendMessage(q, vehicleContext, (update) => configurator.applyConfiguration(update, config))}
                 className="text-left text-xs px-3 py-2 rounded-lg bg-gray-50 hover:bg-blue-50 hover:text-blue-700 border border-gray-200 hover:border-blue-200 transition-all text-gray-600"
               >
                 {q}

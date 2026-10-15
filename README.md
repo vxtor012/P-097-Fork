@@ -6,23 +6,28 @@
 
 | Chức năng | Triển khai hiện tại |
 | --- | --- |
-| Configurator | Chọn cấu hình, xem xe 3D, dự toán; tải catalog qua `/api/vehicles`, có dữ liệu dự phòng frontend |
+| Configurator | Catalog, tỉnh và phụ kiện qua `/api/vehicles`; giá qua `/api/configurate`; dự phòng có nhãn và không được gửi/xuất báo giá |
 | Chat AI | Proxy Next.js gọi FastAPI; LangGraph điều phối hội thoại và công cụ |
-| Giá, phí, ưu đãi trong chat | Công cụ Python đọc snapshot catalog riêng trong Supabase `ai_data` |
+| Giá, phí, ưu đãi trong chat | Công cụ Python đọc cùng bảng nghiệp vụ PostgreSQL `public`; tính cấu hình bằng hàm chung với API |
 | RAG | Tìm kiếm cosine bằng pgvector trên Supabase; OpenAI embedding câu hỏi |
 | API nghiệp vụ | PostgreSQL lưu giá xe, pin, phụ kiện, phí, khuyến mãi, leads, báo giá và tồn kho |
-| Duyệt báo giá | Backend cập nhật trạng thái duyệt/từ chối; frontend vẫn dùng mock |
-| Đăng nhập và dashboard | Đăng nhập demo và dữ liệu mock; chưa có xác thực backend hoàn chỉnh |
-| Xuất PDF | Endpoint placeholder trả URL; chưa tạo PDF thực tế |
+| Duyệt báo giá | Frontend gọi API; backend lưu snapshot giá do server tính, lead và báo giá trong cùng giao dịch |
+| Đăng nhập và dashboard | Phiên DB có thu hồi, cookie HttpOnly; thống kê và API nhân viên kiểm tra vai trò/phạm vi đại lý |
+| Xuất PDF | PDF thật; xem trước tính giá ở backend, báo giá đã lưu dùng snapshot lịch sử |
 
-Configurator tính dự toán ở client. Chat đọc snapshot AI và API nghiệp vụ đọc bảng `public` trên cùng PostgreSQL. Hai nguồn có thể khác thời điểm cập nhật; quản trị viên kiểm tra nguồn trước khi thay bảng giá. Dữ liệu riêng không cần public vào repository.
+Configurator, báo giá/PDF và công cụ giá trong chat dùng chung bảng `public`. RAG giữ tài liệu/embedding riêng trong `ai_data`. Frontend làm mới dữ liệu định kỳ; backend tính lại khi lưu báo giá. Dữ liệu DB có thể là seed/demo nên vẫn cần xác minh nguồn gốc trước sử dụng thật. Xem [đồng bộ dữ liệu](docs/DATA_SYNC.md).
+
+Đã bổ sung phân quyền cửa hàng, sửa tồn kho có kiểm tra xung đột, chống tạo trùng
+báo giá, lưu hội thoại bền vững, đổi cấu hình từ chat, đăng ký nhận tin và mô
+phỏng trả góp theo giả định nhập vào. Xem [rà soát tính năng](docs/FEATURE_REVIEW.md)
+và [DB local của workspace](docs/LOCAL_DATABASE.md).
 
 ## Kiến trúc
 
 ```text
 Browser → Next.js → proxy API → FastAPI
                                 ├─ LangGraph → OpenAI / Google chat
-                                │              ├─ Supabase ai_data catalog
+                                │              ├─ PostgreSQL public catalog / shared pricing
                                 │              └─ Supabase pgvector + OpenAI Embeddings
                                 └─ SQLAlchemy async → PostgreSQL
 ```
@@ -34,7 +39,7 @@ Browser → Next.js → proxy API → FastAPI
 
 ## Chạy local
 
-Yêu cầu Python 3.11+, Node.js 20.9+ và Docker Compose để khởi tạo PostgreSQL. Chạy backend từ thư mục gốc repository.
+Yêu cầu Python 3.11+, Node.js 20.9+ và kết nối PostgreSQL Supabase. Chạy backend từ thư mục gốc repository. Workspace đã chuyển DB ngày 15/10/2026; xem [kết quả chuyển Supabase](docs/SUPABASE_SWITCH.md).
 
 ### Backend và database
 
@@ -46,10 +51,9 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
 # PowerShell: Copy-Item .env.example .env
-docker compose up -d postgres
 ```
 
-Điền key, chọn provider/model trong `.env`. URL database mẫu kết nối PostgreSQL local cổng 5432. Compose tạo schema/catalog demo local khi tạo volume lần đầu. Để dùng dữ liệu riêng, kết nối Supabase và chuẩn bị schema/dữ liệu theo [guide nạp dữ liệu](docs/SUPABASE_DATA_IMPORT.md). Backend không tự import snapshot AI; SQLite không được hỗ trợ.
+Điền `DATABASE_URL`, `MIGRATION_DATABASE_URL` bằng chuỗi Supabase và chọn provider/model trong `.env`. Chuẩn bị schema/dữ liệu theo [guide nạp dữ liệu](docs/SUPABASE_DATA_IMPORT.md). Backend không tự seed/import khi khởi động. Nếu cần DB test riêng trên máy, chạy `docker compose --profile local-db up -d postgres`; không dùng DB vận hành để chạy test.
 
 ```bash
 python scripts/db/migrate_supabase.py upgrade
@@ -82,7 +86,7 @@ docker compose up --build
 docker compose down
 ```
 
-Frontend cổng 3000, backend 8000, PostgreSQL 5432. Compose đặt database hostname `postgres`; frontend gọi `http://backend:8000`. Dùng `DOCKER_DATABASE_URL` nếu cần thay database container. Redis có trong Compose nhưng ứng dụng hiện chưa dùng. AI cần snapshot đã nạp riêng. Xem [guide dữ liệu Supabase](docs/SUPABASE_DATA_IMPORT.md) để chuẩn bị dữ liệu và vận hành mock có chủ đích.
+Frontend cổng 3000, backend 8000; backend Docker dùng cùng `DATABASE_URL` Supabase trong `.env`. Frontend gọi `http://backend:8000`. PostgreSQL local nằm trong profile tùy chọn `local-db`; Redis có trong Compose nhưng ứng dụng hiện chưa dùng. Xem [guide dữ liệu Supabase](docs/SUPABASE_DATA_IMPORT.md) để chuẩn bị dữ liệu.
 
 ## Cấu hình AI trong `.env`
 
@@ -126,7 +130,7 @@ Endpoint backend có prefix `/api/v1`; schema request/response xem tại Swagger
 | `GET /vehicles`, `POST /configurate` | Catalog và tính giá |
 | `POST/GET /leads`, `PATCH /leads/{lead_id}` | Khách hàng tiềm năng |
 | `POST/GET /quotes`, `POST /quote/approve` | Tạo, liệt kê, duyệt báo giá |
-| `POST /quote/export-pdf` | Placeholder PDF |
+| `POST /quote/export-pdf`, `POST /quote/preview-pdf` | PDF báo giá đã lưu / cấu hình tính lại ở backend |
 | `GET/POST /promotions`, `PATCH/DELETE /promotions/{promo_id}` | Khuyến mãi |
 | `GET /inventory`, `PATCH /inventory/{item_id}` | Tồn kho |
 

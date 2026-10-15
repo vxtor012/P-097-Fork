@@ -1,3 +1,6 @@
+from urllib.parse import urlsplit
+
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -15,15 +18,18 @@ elif database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql+asyncpg://", 1)
 
 connect_args = {}
-if "pooler.supabase.com" in database_url or ":6543" in database_url or "supabase" in database_url:
+database_host = urlsplit(database_url).hostname or ""
+if database_host.endswith((".supabase.com", ".supabase.co")):
     connect_args = {
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
+        "ssl": "require",
     }
 
 engine = create_async_engine(
     database_url,
-    echo=settings.app_env == "development",
+    echo=False,
+    pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
     connect_args=connect_args,
@@ -53,6 +59,6 @@ async def get_db():
 
 
 async def init_db():
-    from src import orm_models  # noqa
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # Schema changes belong to the guarded migration runner, never startup.
+        await conn.execute(text("SELECT 1"))

@@ -1,6 +1,6 @@
 "use client";
 
-import { VEHICLES, PROVINCES, ACCESSORIES, VehicleKey } from "@/lib/vehicle-data";
+import { VehicleKey } from "@/lib/vehicle-data";
 import { formatVND } from "@/lib/format";
 import { useConfigurator } from "@/hooks/use-configurator";
 import { MessageCircle, FileText, Check } from "lucide-react";
@@ -12,16 +12,16 @@ interface Props {
 }
 
 export function SelectorPanel({ configurator, onAskAI, onRequestQuote }: Props) {
-  const { config, setField, toggleAccessory, pricing } = configurator;
-  const vehicle = VEHICLES[config.model];
+  const { config, setField, toggleAccessory, pricing, vehicle, vehicles, provinces, accessories, canQuote, statusMessage } = configurator;
 
   return (
     <div className="flex flex-col h-full">
+      <p role="status" className="px-5 py-2 text-xs text-amber-700">{statusMessage}</p>
       <div className="flex-1 overflow-y-auto px-5 py-5 space-y-6">
         {/* 1. Model */}
         <Section title="1. Chọn dòng xe">
           <div className="grid grid-cols-3 gap-2">
-            {(Object.keys(VEHICLES) as VehicleKey[]).map((key) => (
+            {(Object.keys(vehicles) as VehicleKey[]).map((key) => (
               <button
                 key={key}
                 onClick={() => setField("model", key)}
@@ -31,7 +31,7 @@ export function SelectorPanel({ configurator, onAskAI, onRequestQuote }: Props) 
                     : "border-gray-200 text-gray-600 hover:border-gray-300"
                 }`}
               >
-                {VEHICLES[key].label}
+                {vehicles[key].label}
               </button>
             ))}
           </div>
@@ -92,7 +92,7 @@ export function SelectorPanel({ configurator, onAskAI, onRequestQuote }: Props) 
             onChange={(e) => setField("provinceId", e.target.value)}
             className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
           >
-            {Object.entries(PROVINCES).map(([id, p]) => (
+            {Object.entries(provinces).map(([id, p]) => (
               <option key={id} value={id}>{p.label}</option>
             ))}
           </select>
@@ -128,7 +128,7 @@ export function SelectorPanel({ configurator, onAskAI, onRequestQuote }: Props) 
         {/* 6. Phụ kiện */}
         <Section title="6. Phụ kiện">
           <div className="space-y-2">
-            {ACCESSORIES.map((acc) => {
+            {accessories.map((acc) => {
               const checked = config.accessories.includes(acc.id);
               return (
                 <button
@@ -168,6 +168,7 @@ export function SelectorPanel({ configurator, onAskAI, onRequestQuote }: Props) 
         </button>
         <button
           onClick={onRequestQuote}
+          disabled={!canQuote}
           className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors"
         >
           <FileText size={15} /> Yêu cầu báo giá chính thức

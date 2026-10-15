@@ -23,7 +23,7 @@ export interface PriceQuoteData {
   base_price: number;
   battery_option: "buy" | "rent";
   battery_cost: number;
-  accessories: { name: string; price: number }[];
+  accessories: { code: string; name: string; price: number }[];
   promotions: { name: string; value: number; source: string }[];
   rolling_costs: {
     registration_fee: number;

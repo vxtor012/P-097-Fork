@@ -29,6 +29,7 @@ Cấu hình Docker theo [tài liệu Render](https://render.com/docs/docker).
 | `APP_ENV` | `production` |
 | `APP_NAME` | `AutoQuote AI` |
 | `DATABASE_URL` | `postgresql+asyncpg://<username>:<encoded-password>@<session-pooler-host>:5432/postgres` |
+| `JWT_SECRET` | Chuỗi ngẫu nhiên tối thiểu 32 ký tự, riêng cho môi trường production |
 | `LLM_PROVIDER` | `openai` hoặc `google`; chọn rõ provider |
 | `MODEL_NAME` | Model chat OpenAI tài khoản có quyền dùng, ví dụ `gpt-4o-mini` |
 | `GOOGLE_MODEL_NAME` | Model chat Google tài khoản có quyền dùng, nếu chọn Google |
@@ -96,7 +97,7 @@ Trên frontend, kiểm tra:
 - Hỏi AI giá một phiên bản cụ thể, chi phí lăn bánh với tỉnh và số năm rõ ràng; rồi hỏi về pin/bảo hành để kích hoạt RAG. Không có lỗi thiếu dữ liệu hoặc embedding.
 - Refresh và thử trong cửa sổ ẩn danh. Nếu API trả 503, xem mục lỗi và guide dữ liệu.
 
-Catalog nghiệp vụ dùng `public`; AI dùng snapshot `ai_data`. Hai nguồn có thể khác ngày cập nhật. Xác minh phiên bản/nguồn trước khi so sánh; hệ thống không tự ghi đè giá/promo pipeline.
+Catalog, công cụ AI có cấu trúc, configurator và báo giá dùng cùng nguồn nghiệp vụ `public`. RAG dùng tài liệu/embedding `ai_data`; tài liệu không thay thế số tiền nghiệp vụ. Xác minh nguồn gốc và ngày hiệu lực dữ liệu trước khi dùng thương mại.
 
 **Đạt khi:** API catalog, chat cấu trúc và RAG hoạt động; gửi Production URL của Vercel cho mọi người.
 
@@ -109,7 +110,19 @@ Catalog nghiệp vụ dùng `public`; AI dùng snapshot `ai_data`. Hai nguồn c
 - Xem lỗi ở Render Logs và Vercel runtime logs, tránh ghi prompt có thông tin riêng, key hay password. Theo dõi quota AI và dung lượng DB.
 - Instance có cơ chế sleep có thể chậm ở lần truy cập đầu; dùng gói phù hợp nếu cần phản hồi ổn định.
 
-Dự án hiện phù hợp public demo: đăng nhập/dashboard còn mock, API ghi nghiệp vụ chưa có phân quyền đầy đủ, PDF là placeholder. Chỉ dùng thông tin demo khi chia sẻ public; các tính năng này chưa đủ cho vận hành giao dịch thực.
+Trước release mới, backup DB rồi chạy `python scripts/db/migrate_supabase.py upgrade`
+từ môi trường quản trị trỏ đúng đích. Migration `20261014070000` bổ sung phiên,
+cửa hàng, hội thoại, đăng ký tin và chống trùng báo giá; không nạp lại seed vào DB đã có.
+Sau deploy kiểm tra `/ready`: `database=connected`, `schema_ready=true`;
+`ai_configured` chỉ xác nhận có cấu hình, cần thử chat thật để xác minh quota/model.
+`rag_dataset_ready=true` cần cho tư vấn dựa trên tài liệu.
+
+Đăng nhập, dashboard, dữ liệu ghi và PDF đã dùng backend/DB thật. Production
+không nhận tài khoản demo `@example.invalid`; cấp tài khoản nhân viên bằng
+quy trình quản trị và hash mật khẩu trước khi dùng. Bộ giá/tồn kho local là
+demo, không chuyển thành dữ liệu thương mại chỉ bằng việc deploy code.
+Rollback release có thể giữ schema mở rộng; không drop các bảng mới khi đã có
+phiên, báo giá hoặc hội thoại. Đổi `JWT_SECRET` sẽ buộc các phiên hiện tại đăng nhập lại.
 
 ## Xử lý lỗi
 
@@ -124,4 +137,4 @@ Dự án hiện phù hợp public demo: đăng nhập/dashboard còn mock, API g
 | CORS | Origin phải chính xác HTTPS/domain/port, không path; redeploy backend |
 | Người khác bị yêu cầu đăng nhập Vercel | Chia sẻ Production domain và kiểm tra Deployment Protection |
 | Web lookup không khả dụng | Snapshot chưa có cấu hình web tùy chọn; không ảnh hưởng catalog/RAG |
-| Giá chat khác configurator | Kiểm tra ngày cập nhật nguồn `ai_data` và `public`, không tự sửa giá để khớp |
+| Giá chat khác configurator | Kiểm tra cấu hình, phụ kiện, đại lý, thời điểm giá và tool đã dùng; giá cấu hình phải từ cùng nguồn `public` |

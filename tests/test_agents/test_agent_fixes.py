@@ -37,7 +37,8 @@ async def test_agent_may_ask_clarifying_question(monkeypatch):
     fake = FakeChatModel([AIMessage(content="Bạn muốn tính chi phí lăn bánh ở tỉnh/thành nào và trong bao nhiêu năm?")])
     monkeypatch.setattr("src.agents.graph.get_llm", lambda: fake)
     result = await build_graph(tools=[]).ainvoke(
-        {"query": "Chi phí lăn bánh VF 6 Plus?"}, {"configurable": {"thread_id": "clarify"}})
+        {"query": "Chi phí lăn bánh VF 6 Plus?"}, {"configurable": {"thread_id": "clarify"}}
+    )
     assert result["response"].endswith("năm?")
     assert result["response"] != CONTACT_MESSAGE
     assert len(fake.prompts) == 1
@@ -50,11 +51,15 @@ async def test_step_cap_synthesizes_from_tool_results(monkeypatch):
         """Lookup."""
         return json.dumps({"matched_versions": [{"price_vnd": 699_000_000, "price_text": "699 triệu đồng"}]})
 
-    calls = [AIMessage(content="", tool_calls=[{"name": "lookup", "args": {"query": f"q{i}"}, "id": f"c{i}"}]) for i in range(6)]
+    calls = [
+        AIMessage(content="", tool_calls=[{"name": "lookup", "args": {"query": f"q{i}"}, "id": f"c{i}"}])
+        for i in range(6)
+    ]
     fake = FakeChatModel(calls + [AIMessage(content="VF 6 Plus giá 699 triệu đồng.")])
     monkeypatch.setattr("src.agents.graph.get_llm", lambda: fake)
     result = await build_graph(tools=[lookup]).ainvoke(
-        {"query": "Giá VF 6 Plus?"}, {"configurable": {"thread_id": "cap"}})
+        {"query": "Giá VF 6 Plus?"}, {"configurable": {"thread_id": "cap"}}
+    )
     assert result["response"] == "VF 6 Plus giá 699 triệu đồng."
     # lời gọi synthesis không được chứa tool_calls mồ côi ở cuối
     last_prompt = fake.prompts[-1]
@@ -73,15 +78,20 @@ def test_repeat_call_detected():
 
 
 def test_soft_tool_error_is_detected():
-    messages = [HumanMessage(content="x"), ToolMessage(content=json.dumps({"error": "Không tìm thấy"}), tool_call_id="1")]
+    messages = [
+        HumanMessage(content="x"),
+        ToolMessage(content=json.dumps({"error": "Không tìm thấy"}), tool_call_id="1"),
+    ]
     assert _last_tool_errored(messages)
 
 
 def test_money_guard_knows_color_and_fee_fields():
     messages = [
         HumanMessage(content="Giá màu đỏ?"),
-        ToolMessage(content=json.dumps({"color_options": [{"total_car_price_vnd": 293_000_000, "extra_price_vnd": 8_000_000}]}),
-                    tool_call_id="1"),
+        ToolMessage(
+            content=json.dumps({"color_options": [{"total_car_price_vnd": 293_000_000, "extra_price_vnd": 8_000_000}]}),
+            tool_call_id="1",
+        ),
     ]
     assert _ungrounded_amounts("Tổng xe 293 triệu đồng, phụ phí màu 8 triệu đồng.", messages) == []
 
@@ -104,13 +114,18 @@ def test_money_guard_accepts_number_grounded_in_earlier_turn_tool():
 def test_profile_ignores_values_model_invented():
     messages = [
         HumanMessage(content="Tư vấn VF 6 giúp mình"),
-        AIMessage(content="", tool_calls=[{"name": "search_vehicles", "args": {"vehicle_queries": ["VF 6"], "seats": 7}, "id": "1"}]),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "search_vehicles", "args": {"vehicle_queries": ["VF 6"], "seats": 7}, "id": "1"}],
+        ),
     ]
     assert _profile_from_tool_calls(messages, {}) == {"vehicles": ["VF 6"]}
 
 
 def test_stall_regex_does_not_hit_valid_answer():
-    assert not _is_stall("Nếu bạn sẽ xem thêm phiên bản Plus, giá niêm yết là 699 triệu đồng và có nhiều màu ngoại thất để chọn.")
+    assert not _is_stall(
+        "Nếu bạn sẽ xem thêm phiên bản Plus, giá niêm yết là 699 triệu đồng và có nhiều màu ngoại thất để chọn."
+    )
     assert _is_stall("Để mình tra cứu giúp bạn nhé")
 
 
@@ -125,6 +140,7 @@ def test_prefilter_normalizes_nfd_question():
 
 
 # ---------- tools ----------
+
 
 def test_resolve_is_precise():
     for query in ("VinFast VF 6 Plus", "VF6 bản Plus"):
@@ -173,11 +189,17 @@ def test_province_aliases():
 
 
 def test_tco_requires_years_and_known_location():
-    missing_years = json.loads(vt.calculate_vehicle_tco.invoke({"vehicle_queries": ["VF 6 Plus"], "location": "Hà Nội"}))
+    missing_years = json.loads(
+        vt.calculate_vehicle_tco.invoke({"vehicle_queries": ["VF 6 Plus"], "location": "Hà Nội"})
+    )
     assert missing_years["status"] == "need_input" and missing_years["missing"] == ["years"]
-    bad = json.loads(vt.calculate_vehicle_tco.invoke({"vehicle_queries": ["VF 6 Plus"], "location": "Atlantis", "years": 5}))
+    bad = json.loads(
+        vt.calculate_vehicle_tco.invoke({"vehicle_queries": ["VF 6 Plus"], "location": "Atlantis", "years": 5})
+    )
     assert "error" in bad
-    ok = json.loads(vt.calculate_vehicle_tco.invoke({"vehicle_queries": ["VF 6 Plus"], "location": "Sài Gòn", "years": 5}))
+    ok = json.loads(
+        vt.calculate_vehicle_tco.invoke({"vehicle_queries": ["VF 6 Plus"], "location": "Sài Gòn", "years": 5})
+    )
     assert ok["tco"][0]["location"] == "TP. Hồ Chí Minh"
 
 
@@ -219,6 +241,7 @@ def test_promotion_green_switch_voucher_values():
 
 def test_promotion_values_pass_money_guard():
     from src.agents.graph import _ungrounded_amounts
+
     raw = vt.get_eligible_promotions.invoke({"vehicle_queries": ["VF 6 Plus"], "customer_group": "green_switch"})
     messages = [HumanMessage(content="Tôi đổi xe xăng sang xe điện"), ToolMessage(content=raw, tool_call_id="1")]
     assert _ungrounded_amounts("Voucher cho chủ xe Lux SA2.0 là 80 triệu đồng.", messages) == []
@@ -227,6 +250,7 @@ def test_promotion_values_pass_money_guard():
 
 def test_rag_category_is_enum_and_falls_back(monkeypatch):
     from src.agents.tools import rag
+
     monkeypatch.setattr(rag, "_embed_query", lambda q: [1.0] + [0.0] * 1535)
     monkeypatch.setattr(rag, "_retrieve", lambda vec, top_k=5, category=None: [] if category else [{"id": "x"}])
     result = json.loads(rag.search_gold_knowledge.invoke({"query": "pin", "category": "pin_va_tram_sac"}))
@@ -237,12 +261,16 @@ def test_rag_category_is_enum_and_falls_back(monkeypatch):
 
 def test_interior_question_is_routed_to_rag():
     from src.agents.graph import _guard_reason
-    reason, nudge = _guard_reason("Nội thất VF 6 màu gì?", "Nội thất màu be.", [HumanMessage(content="Nội thất VF 6 màu gì?")])
+
+    reason, nudge = _guard_reason(
+        "Nội thất VF 6 màu gì?", "Nội thất màu be.", [HumanMessage(content="Nội thất VF 6 màu gì?")]
+    )
     assert reason == "interior_no_rag" and "search_gold_knowledge" in nudge
 
 
 def test_interior_answer_with_rag_result_gets_confirmation_note(monkeypatch):
     import asyncio
+
     from src.agents.graph import build_graph
 
     @tool
@@ -250,11 +278,19 @@ def test_interior_answer_with_rag_result_gets_confirmation_note(monkeypatch):
         """Fake RAG."""
         return json.dumps({"results": [{"id": "x", "content": "Nội thất đen"}]})
 
-    fake = FakeChatModel([
-        AIMessage(content="", tool_calls=[{"name": "search_gold_knowledge", "args": {"query": "nội thất VF 6"}, "id": "1"}]),
-        AIMessage(content="VF 6 có nội thất màu đen theo tài liệu."),
-    ])
+    fake = FakeChatModel(
+        [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "search_gold_knowledge", "args": {"query": "nội thất VF 6"}, "id": "1"}],
+            ),
+            AIMessage(content="VF 6 có nội thất màu đen theo tài liệu."),
+        ]
+    )
     monkeypatch.setattr("src.agents.graph.get_llm", lambda: fake)
-    result = asyncio.run(build_graph(tools=[search_gold_knowledge]).ainvoke(
-        {"query": "Nội thất VF 6 màu gì?"}, {"configurable": {"thread_id": "interior"}}))
+    result = asyncio.run(
+        build_graph(tools=[search_gold_knowledge]).ainvoke(
+            {"query": "Nội thất VF 6 màu gì?"}, {"configurable": {"thread_id": "interior"}}
+        )
+    )
     assert "xác nhận với đại lý" in result["response"]

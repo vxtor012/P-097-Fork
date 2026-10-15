@@ -32,7 +32,7 @@ async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
                 "battery": "rent",
                 "accessories": [],
             }
-            assert config["configurable"]["thread_id"] == "session-123"
+            assert config["configurable"]["thread_id"] == "68b3b8c2-6e21-4c3f-b070-e7ae05c6b6fe"
             return {"answer": "Giá theo catalog là 699 triệu đồng."}
 
     monkeypatch.setattr(routes, "agent", FakeAgent())
@@ -41,7 +41,7 @@ async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
         "/api/v1/chat",
         json={
             "message": "Giá VF 6?",
-            "session_id": "session-123",
+            "session_id": "68b3b8c2-6e21-4c3f-b070-e7ae05c6b6fe",
             "vehicle_context": {
                 "model": "VF 6",
                 "version": "Plus",
@@ -57,7 +57,8 @@ async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
     assert response.json() == {
         "response": "Giá theo catalog là 699 triệu đồng.",
         "analysis": None,
-        "session_id": "session-123",
+        "session_id": "68b3b8c2-6e21-4c3f-b070-e7ae05c6b6fe",
+        "configuration_update": None,
     }
 
 
@@ -86,9 +87,6 @@ async def test_list_vehicles(client):
     assert response.status_code == 200
     data = response.json()
     assert "vehicles" in data
-    vehicles = data["vehicles"]
-    for model in ["VF3", "VF5", "VF6", "VF7", "VF8", "VF9"]:
-        assert model in vehicles
-        assert len(vehicles[model]["versions"]) > 0
-        assert len(vehicles[model]["colors"]) > 0
-    assert "VFWILD" not in vehicles
+    # Empty business tables must not silently inject mock vehicle records.
+    assert data["vehicles"] == {}
+    assert data["data_source"] == "postgresql/public"

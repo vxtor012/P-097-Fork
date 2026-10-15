@@ -27,8 +27,7 @@ async def test_bootstrap_refuses_existing_database_before_writing_schema(monkeyp
     monkeypatch.setattr(migration, "inspect", AsyncMock(return_value={"row_counts": {"quotes": 31}}))
     with pytest.raises(migration.OperationError, match="already exist"):
         await migration.run(conn, "bootstrap", seed=True)
-    assert all("CREATE" not in call.args[0] and "INSERT" not in call.args[0]
-               for call in conn.execute.call_args_list)
+    assert all("CREATE" not in call.args[0] and "INSERT" not in call.args[0] for call in conn.execute.call_args_list)
     assert conn.transaction.return_value.__aexit__.call_args.args[0] is migration.OperationError
 
 
@@ -43,8 +42,26 @@ async def test_failed_sql_is_not_recorded_as_applied(tmp_path, monkeypatch):
     with pytest.raises(asyncpg.PostgresSyntaxError):
         await migration.apply_pending(conn)
     assert conn.execute.call_args_list[1].args == (sql,)
-    assert not any("INSERT INTO supabase_migrations" in call.args[0]
-                   for call in conn.execute.call_args_list)
+    assert not any("INSERT INTO supabase_migrations" in call.args[0] for call in conn.execute.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_legacy_cloud_history_skips_incompatible_local_baseline(tmp_path, monkeypatch):
+    (tmp_path / "20261014070000_complete_business_workflows.sql").write_text(
+        "SELECT 'local baseline'", encoding="utf-8"
+    )
+    (tmp_path / "20261015060000_bridge_legacy_business_workflows.sql").write_text(
+        "SELECT 'explicit bridge'", encoding="utf-8"
+    )
+    monkeypatch.setattr(migration, "MIGRATIONS", tmp_path)
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+    conn.fetchrow = AsyncMock(return_value=None)
+    conn.fetchval = AsyncMock(return_value=True)
+    result = await migration.apply_pending(conn)
+    assert result == ["20261015060000_bridge_legacy_business_workflows.sql"]
+    assert not any(call.args[0] == "SELECT 'local baseline'" for call in conn.execute.call_args_list)
+    assert any(call.args[0] == "SELECT 'explicit bridge'" for call in conn.execute.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -52,9 +69,15 @@ async def test_upgrade_rolls_back_if_row_counts_change(monkeypatch):
     conn = MagicMock()
     conn.transaction.return_value = AsyncMock()
     conn.execute = AsyncMock()
-    report = {"missing_columns": {}, "wrong_column_types": [],
-              "row_counts": {"quotes": 31}, "public_privileges": [], "rls": [],
-              "unindexed_foreign_keys": [], "missing_or_invalid_unique_indexes": []}
+    report = {
+        "missing_columns": {},
+        "wrong_column_types": [],
+        "row_counts": {"quotes": 31},
+        "public_privileges": [],
+        "rls": [],
+        "unindexed_foreign_keys": [],
+        "missing_or_invalid_unique_indexes": [],
+    }
     changed = {**report, "row_counts": {"quotes": 30}}
     monkeypatch.setattr(migration, "inspect", AsyncMock(side_effect=[report, changed]))
     monkeypatch.setattr(migration, "apply_pending", AsyncMock(return_value=[]))

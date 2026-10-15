@@ -9,12 +9,12 @@ import { useAuthStore, ROLE_HOME } from "@/lib/auth-store";
 import { CarImage } from "@/components/shared/car-image";
 
 const DEMO = [
-  { label: "Nhân viên kinh doanh · VinFast Mỹ Đình", email: "seller.mydinh@vinfast.vn", pw: "123456" },
-  { label: "Nhân viên kinh doanh · VinFast Quận 7", email: "seller.q7@vinfast.vn", pw: "123456" },
-  { label: "Thủ kho hệ thống · VinFast", email: "warehouse@vinfast.vn", pw: "123456" },
-  { label: "Quản trị viên toàn hệ thống", email: "admin@vinfast.vn", pw: "123456" },
+  { label: "Kinh doanh · Mỹ Đình", email: "demo.seller.d1000000-0000-0000-0000-000000000001@example.invalid", pw: "123456" },
+  { label: "Kinh doanh · Quận 7", email: "demo.seller.d1000000-0000-0000-0000-000000000003@example.invalid", pw: "123456" },
+  { label: "Thủ kho · Mỹ Đình", email: "demo.warehouse.d1000000-0000-0000-0000-000000000001@example.invalid", pw: "123456" },
+  { label: "Admin demo", email: "demo.admin@example.invalid", pw: "123456" },
 ];
-const SAFE_FROM = ["/seller/dashboard", "/warehouse/dashboard"];
+const SAFE_FROM = ["/seller/dashboard", "/seller/leads", "/seller/quotes", "/seller/promotions", "/seller/inventory", "/warehouse/dashboard"];
 
 function LoginForm() {
   const router = useRouter();
@@ -32,7 +32,10 @@ function LoginForm() {
     // Nếu bị chặn vì sai quyền thì về trang của chính vai trò đó, tránh vòng lặp chuyển hướng
     const home = ROLE_HOME[user.role];
     if (!home) { logout(); return; } // phiên đăng nhập cũ có vai trò không còn tồn tại
-    router.replace(from && !sp.get("error") && SAFE_FROM.includes(from) ? from : home);
+    const roleAllowsFrom = user.role === 'admin'
+      || (user.role === 'seller' && from?.startsWith('/seller/'))
+      || (['warehouse', 'warehouse_manager'].includes(user.role) && from?.startsWith('/warehouse/'));
+    router.replace(from && !sp.get("error") && roleAllowsFrom && SAFE_FROM.includes(from) ? from : home);
   }, [user, router, sp, logout]);
 
   const submit = async (e: React.FormEvent) => {
@@ -79,17 +82,17 @@ function LoginForm() {
             </button>
           </form>
 
-          <div className="mt-10">
+          {(process.env.NODE_ENV !== 'production' || process.env.NEXT_PUBLIC_SHOW_DEMO_LOGIN === 'true') && <div className="mt-10">
             <p className="text-sm font-medium text-slate-500">Tài khoản demo (bấm để điền sẵn)</p>
             <div className="mt-3 grid gap-2">
               {DEMO.map((d) => (
                 <button key={d.email} type="button" onClick={() => { setEmail(d.email); setPassword(d.pw); setError(""); }}
                   className="flex items-center justify-between rounded-2xl border border-slate-200 px-4 py-3 text-left text-sm hover:border-blue-600">
-                  <span className="font-medium text-slate-800">{d.label}</span><span className="text-slate-400">{d.email}</span>
+                  <span className="font-medium text-slate-800">{d.label}</span><span title={d.email} className="min-w-0 max-w-[55%] truncate pl-3 text-xs text-slate-400">{d.email}</span>
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
         </div>
       </main>
     </div>

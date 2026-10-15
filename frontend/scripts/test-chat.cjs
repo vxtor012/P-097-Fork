@@ -7,10 +7,14 @@ const path = require('node:path');
 function load(file, fetch, react) {
   const timers = new Map();
   const context = {
-    exports: {}, process, AbortController, fetch,
+    exports: {}, process, AbortController, URL, fetch,
     setTimeout: (fn, ms) => { timers.set(ms, fn); return ms; },
     clearTimeout: (id) => timers.delete(id),
-    require: (name) => name === 'react' ? react : require(name),
+    require: (name) => {
+      if (name === 'react') return react;
+      if (name.startsWith('@/')) return load(name.slice(2) + '.ts', fetch, react).api;
+      return require(name);
+    },
   };
   const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
   vm.runInNewContext(ts.transpileModule(source, {
@@ -31,6 +35,7 @@ async function checkHook(mode) {
     },
     useCallback: (fn) => fn,
     useRef: (value) => ({ current: value }),
+    useEffect: (fn) => fn(),
   };
   const { api, timers } = load('hooks/use-chat.ts', (_, options) => {
     calls++;
@@ -72,7 +77,11 @@ async function checkProxy(mode) {
       json: async () => mode === 'error' ? { detail: 'AI chưa sẵn sàng' } : { response: 'Thông tin VF5' } };
   });
   const body = { message: 'Tư vấn', vehicle_context: { model: 'VF5' } };
-  const pending = api.POST({ json: async () => body });
+  const pending = api.POST(new Request('http://127.0.0.1:3000/api/chat', {
+    method: 'POST',
+    headers: { origin: 'http://127.0.0.1:3000', host: '127.0.0.1:3000', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }));
   await new Promise(setImmediate);
   if (mode === 'timeout') timers.get(60000)();
   const result = await pending;
@@ -83,8 +92,28 @@ async function checkProxy(mode) {
   assert.equal(timers.size, 0);
 }
 
+async function checkProxyOrigin() {
+  let calls = 0;
+  const { api } = load('app/api/chat/route.ts', async () => {
+    calls++;
+    return { ok: true, json: async () => ({ response: 'Thông tin VF5' }) };
+  });
+  const request = (origin) => new Request('http://localhost:3000/api/chat', {
+    method: 'POST',
+    headers: { origin, host: '127.0.0.1:3000', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'Tư vấn' }),
+  });
+  const allowed = await api.POST(request('http://127.0.0.1:3000'));
+  assert.equal(allowed.status, 200, 'Use browser-facing Host when Next reconstructs its internal URL');
+  assert.equal(calls, 1);
+  const blocked = await api.POST(request('https://other.example'));
+  assert.equal(blocked.status, 403, 'Reject requests from a foreign origin');
+  assert.equal(calls, 1, 'Never forward a rejected request to the backend');
+}
+
 (async () => {
   for (const mode of ['success', 'error', 'timeout']) await checkHook(mode);
   for (const mode of ['success', 'error', 'network', 'timeout']) await checkProxy(mode);
-  console.log('7 chat scenarios passed');
+  await checkProxyOrigin();
+  console.log('8 chat scenarios passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

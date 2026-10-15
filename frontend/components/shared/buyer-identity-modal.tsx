@@ -1,12 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { X, User, Phone, MapPin, FileText, Loader2, CheckCircle2, Lock } from "lucide-react";
+import { X, User, Phone, FileText, Loader2, CheckCircle2, Lock } from "lucide-react";
 
 export interface BuyerInfo {
   name:    string;
   phone:   string;
-  province:string;
   note:    string;
 }
 
@@ -22,7 +21,7 @@ export function BuyerIdentityModal({
   isOpen, onClose, onConfirm, finalPrice, carConfig,
 }: Props) {
   const [form, setForm] = useState<BuyerInfo>({
-    name: "", phone: "", province: "", note: "",
+    name: "", phone: "", note: "",
   });
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -44,11 +43,11 @@ export function BuyerIdentityModal({
       setTimeout(() => {
         onClose();
         setSubmitted(false);
-        setForm({ name: "", phone: "", province: "", note: "" });
+        setForm({ name: "", phone: "", note: "" });
       }, 1500);
-    } catch (err: any) {
+    } catch (err: unknown) {
       setLoading(false);
-      setError(err?.message || "Không thể gửi yêu cầu báo giá. Vui lòng thử lại!");
+      setError((err instanceof Error ? err.message : null) || "Không thể gửi yêu cầu báo giá. Vui lòng thử lại!");
     }
   };
 
@@ -67,7 +66,7 @@ export function BuyerIdentityModal({
               Tư vấn viên sẽ liên hệ xác nhận giá
             </p>
           </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-white/20 rounded-lg transition-colors">
+          <button disabled={loading} onClick={onClose} className="p-1.5 hover:bg-white/20 rounded-lg transition-colors disabled:opacity-50" aria-label="Đóng biểu mẫu">
             <X size={18} />
           </button>
         </div>
@@ -80,8 +79,8 @@ export function BuyerIdentityModal({
             </div>
             <h3 className="font-bold text-gray-900 text-lg">Đã gửi thành công!</h3>
             <p className="text-gray-500 text-sm mt-2">
-              Tư vấn viên sẽ liên hệ với <strong>{form.name}</strong> qua số{" "}
-              <strong>{form.phone}</strong> trong vòng 30 phút.
+              Đại lý đã nhận thông tin của <strong>{form.name}</strong> và số{" "}
+              <strong>{form.phone}</strong> để tư vấn.
             </p>
           </div>
         ) : (
@@ -117,6 +116,8 @@ export function BuyerIdentityModal({
                 <User size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   required
+                  minLength={2}
+                  maxLength={150}
                   value={form.name}
                   onChange={(e) => set("name", e.target.value)}
                   placeholder="Nguyễn Văn A"
@@ -138,27 +139,9 @@ export function BuyerIdentityModal({
                   value={form.phone}
                   onChange={(e) => set("phone", e.target.value)}
                   placeholder="0912 345 678"
-                  pattern="[0-9]{10,11}"
+                  pattern="[+0-9 ()-]{10,18}"
                   className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-              </div>
-            </div>
-
-            {/* Province */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-gray-600">Tỉnh / Thành phố</label>
-              <div className="relative">
-                <MapPin size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <select
-                  value={form.province}
-                  onChange={(e) => set("province", e.target.value)}
-                  className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white appearance-none"
-                >
-                  <option value="">-- Chọn tỉnh --</option>
-                  {["Hà Nội","TP. Hồ Chí Minh","Đà Nẵng","Hải Phòng","Cần Thơ","Bình Dương","Tỉnh khác"].map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
-                </select>
               </div>
             </div>
 
@@ -168,6 +151,7 @@ export function BuyerIdentityModal({
               <div className="relative">
                 <FileText size={14} className="absolute left-3 top-3 text-gray-400" />
                 <textarea
+                  maxLength={2000}
                   value={form.note}
                   onChange={(e) => set("note", e.target.value)}
                   placeholder="VD: Tôi muốn lái thử trước, hoặc hỏi về khuyến mãi..."
@@ -180,7 +164,7 @@ export function BuyerIdentityModal({
             {/* Disclaimer */}
             <p className="text-xs text-gray-400 flex items-center gap-1">
               <Lock size={12} className="shrink-0 text-gray-400" />
-              <span>Thông tin chỉ dùng để tư vấn viên liên hệ. Không chia sẻ bên thứ 3.</span>
+              <span>Gửi yêu cầu đồng nghĩa bạn đồng ý để đại lý đã chọn liên hệ tư vấn.</span>
             </p>
 
             {error && (
@@ -191,6 +175,7 @@ export function BuyerIdentityModal({
             <div className="flex gap-3 pt-1">
               <button
                 type="button"
+                disabled={loading}
                 onClick={onClose}
                 className="flex-1 py-2.5 rounded-xl border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
               >

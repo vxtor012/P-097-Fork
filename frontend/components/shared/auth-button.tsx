@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, useState } from "react";
+import { useRouter } from 'next/navigation';
 import { useAuthStore, ROLE_HOME } from "@/lib/auth-store";
 
 const subscribeToNothing = () => () => {};
@@ -12,6 +13,8 @@ const getServerMountedSnapshot = () => false;
 export function AuthButton() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const router = useRouter();
+  const [error, setError] = useState('');
   const mounted = useSyncExternalStore(
     subscribeToNothing,
     getClientMountedSnapshot,
@@ -27,7 +30,11 @@ export function AuthButton() {
       <Link href={ROLE_HOME[user.role]} className={base}>
         Vào dashboard · {user.name.split(" ").pop()}
       </Link>
-      <button onClick={logout} className="text-sm font-medium text-slate-500 hover:text-slate-900">Đăng xuất</button>
+      <button onClick={async () => {
+        if (await logout()) { router.replace('/'); router.refresh(); }
+        else setError('Chưa đăng xuất được. Vui lòng thử lại.');
+      }} className="text-sm font-medium text-slate-500 hover:text-slate-900">Đăng xuất</button>
+      {error && <span role="alert" className="text-xs text-red-600">{error}</span>}
     </div>
   );
 }

@@ -78,12 +78,13 @@ async def inspect(conn) -> dict:
     types = {}
     for record in records:
         actual.setdefault(record["table_name"], set()).add(record["column_name"])
-        types[(record["table_name"], record["column_name"])] = (
-            record["data_type"], record["character_maximum_length"]
-        )
+        types[(record["table_name"], record["column_name"])] = (record["data_type"], record["character_maximum_length"])
     expected = expected_columns()
-    missing = {table: sorted(cols - actual.get(table, set()))
-               for table, cols in expected.items() if cols - actual.get(table, set())}
+    missing = {
+        table: sorted(cols - actual.get(table, set()))
+        for table, cols in expected.items()
+        if cols - actual.get(table, set())
+    }
     wrong_types = []
     for column, length in (("image_url", 500), ("roof_hex", 7)):
         value = types.get(("vehicle_prices", column))
@@ -96,19 +97,26 @@ async def inspect(conn) -> dict:
     tables = sorted(set(expected) & set(actual))
     if "chat_sessions" in actual:
         tables.append("chat_sessions")
-    security = await conn.fetch("""
+    security = await conn.fetch(
+        """
         SELECT tablename, rowsecurity FROM pg_tables
         WHERE schemaname = 'public' AND tablename = ANY($1::text[])
         ORDER BY tablename
-    """, tables)
-    privileges = await conn.fetch("""
+    """,
+        tables,
+    )
+    privileges = await conn.fetch(
+        """
         SELECT grantee, table_name, privilege_type
         FROM information_schema.role_table_grants
         WHERE table_schema = 'public' AND table_name = ANY($1::text[])
           AND grantee IN ('anon','authenticated','PUBLIC')
         ORDER BY table_name, grantee, privilege_type
-    """, tables)
-    missing_indexes = await conn.fetch("""
+    """,
+        tables,
+    )
+    missing_indexes = await conn.fetch(
+        """
         SELECT c.conrelid::regclass::text AS table_name, c.conname AS foreign_key
         FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
         JOIN pg_class tbl ON tbl.oid = c.conrelid
@@ -119,7 +127,9 @@ async def inspect(conn) -> dict:
             WHERE i.indrelid = c.conrelid AND i.indisvalid AND i.indpred IS NULL
               AND (i.indkey::smallint[])[0:cardinality(c.conkey)-1] @> c.conkey
           )
-    """, tables)
+    """,
+        tables,
+    )
     required_indexes = await conn.fetch("""
         SELECT ic.relname AS name, i.indisunique, i.indisvalid,
                pg_get_expr(i.indpred, i.indrelid) AS predicate,
@@ -134,11 +144,18 @@ async def inspect(conn) -> dict:
     """)
     specifications = {
         "ux_vehicle_prices_current_configuration": (["model", "version", "color"], "(effective_to IS NULL)"),
-        "ux_inventory_configuration": (["dealer_id", "model", "version", "color"], None),
+        "ux_inventory_configuration": (
+            ["dealer_id", "model", "version", "color"],
+            "(store_id IS NULL)" if ("inventory", "store_id") in types else None,
+        ),
     }
-    valid_indexes = {row["name"] for row in required_indexes
-                     if row["indisunique"] and row["indisvalid"]
-                     and (row["columns"], row["predicate"]) == specifications[row["name"]]}
+    valid_indexes = {
+        row["name"]
+        for row in required_indexes
+        if row["indisunique"]
+        and row["indisvalid"]
+        and (row["columns"], row["predicate"]) == specifications[row["name"]]
+    }
     return {
         "missing_columns": missing,
         "wrong_column_types": wrong_types,
@@ -178,16 +195,37 @@ async def apply_pending(conn) -> list[str]:
             if known["name"] != name:
                 raise OperationError(f"Migration history conflicts with {path.name}")
             continue
+        # The existing cloud branch already created these tables with legacy
+        # keys. Preserve that history and apply the explicit bridge migration;
+        # never pretend the incompatible local baseline was executed there.
+        if version == "20261014070000" and await has_legacy_workflows(conn):
+            continue
         sql = path.read_text(encoding="utf-8")
         # Simple-query execution supports whole SQL files, including dollar-quoted DO blocks.
         # Never split SQL on semicolons; never ignore a failed statement.
         await conn.execute(sql)
         await conn.execute(
-            "INSERT INTO supabase_migrations.schema_migrations (version, name, statements) "
-            "VALUES ($1, $2, $3)", version, name, [sql],
+            "INSERT INTO supabase_migrations.schema_migrations (version, name, statements) VALUES ($1, $2, $3)",
+            version,
+            name,
+            [sql],
         )
         applied.append(path.name)
     return applied
+
+
+async def has_legacy_workflows(conn) -> bool:
+    if not await conn.fetchval("SELECT to_regclass('supabase_migrations.schema_migrations') IS NOT NULL"):
+        return False
+    return bool(
+        await conn.fetchval("""
+        SELECT count(*)=2 FROM supabase_migrations.schema_migrations
+        WHERE (version,name) IN (
+          ('20261008111901','real_demo_integration'),
+          ('20261008114249','store_inventory_keys')
+        )
+    """)
+    )
 
 
 async def run(conn, mode: str, seed: bool = False) -> dict:
@@ -209,8 +247,35 @@ async def run(conn, mode: str, seed: bool = False) -> dict:
                 await conn.execute((ROOT / "scripts/db/seed.sql").read_text(encoding="utf-8"))
         elif mode == "upgrade":
             allowed = {"image_url", "roof_hex"}
-            unsupported = {table: cols for table, cols in before["missing_columns"].items()
-                           if table != "vehicle_prices" or not set(cols) <= allowed}
+            additive_tables = {
+                "branches",
+                "stores",
+                "user_stores",
+                "auth_sessions",
+                "quote_requests",
+                "newsletter_subscriptions",
+                "conversation_threads",
+            }
+            unsupported = {
+                table: cols
+                for table, cols in before["missing_columns"].items()
+                if not (
+                    (table == "vehicle_prices" and set(cols) <= allowed)
+                    or (table == "inventory" and set(cols) <= {"store_id"})
+                    or (table in additive_tables and table not in before["row_counts"])
+                )
+            }
+            if unsupported and await has_legacy_workflows(conn):
+                legacy_additions = {
+                    "branches": {"is_active"},
+                    "stores": {"address", "is_active"},
+                    "auth_sessions": {"id", "created_at", "revoked_at"},
+                    "quote_requests": {"id"},
+                    "newsletter_subscriptions": {"id", "consent_at"},
+                }
+                unsupported = {
+                    t: cols for t, cols in unsupported.items() if not set(cols) <= legacy_additions.get(t, set())
+                }
             if unsupported or before["wrong_column_types"]:
                 raise OperationError(
                     f"Unsupported schema drift: {unsupported}; types: {before['wrong_column_types']}. "
@@ -223,11 +288,13 @@ async def run(conn, mode: str, seed: bool = False) -> dict:
             # Catalog is a fresh-db snapshot; business fixtures read it without updating it.
             sys.path.insert(0, str(ROOT))
             from scripts.db import mock_data
+
             data = await mock_data.snapshot(conn)
             at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
             plan = mock_data.build_plan(data, at)
-            fingerprints = {t: await conn.fetchval(mock_data.fingerprint_sql(t))
-                            for t in mock_data.PROTECTED + mock_data.BUSINESS}
+            fingerprints = {
+                t: await conn.fetchval(mock_data.fingerprint_sql(t)) for t in mock_data.PROTECTED + mock_data.BUSINESS
+            }
             sql = mock_data.render_sql(plan, fingerprints).removeprefix("BEGIN;").removesuffix("COMMIT;")
             await conn.execute(sql)
         after = await inspect(conn)
@@ -239,7 +306,7 @@ async def run(conn, mode: str, seed: bool = False) -> dict:
             raise OperationError("Foreign-key index validation failed; transaction will be rolled back")
         if after["missing_or_invalid_unique_indexes"]:
             raise OperationError("Unique-index validation failed; transaction will be rolled back")
-        if mode == "upgrade" and after["row_counts"] != before["row_counts"]:
+        if mode == "upgrade" and any(after["row_counts"].get(t) != n for t, n in before["row_counts"].items()):
             raise OperationError("Unexpected row-count change; transaction will be rolled back")
         return {"applied": applied, **after}
 
@@ -254,16 +321,19 @@ async def main(args) -> int:
     if ssl is None and host.endswith((".supabase.com", ".supabase.co")):
         ssl = "require"
     options = {"ssl": ssl} if ssl else {}
-    conn = await asyncpg.connect(url, timeout=15, command_timeout=60,
-                                statement_cache_size=0, **options)
+    conn = await asyncpg.connect(url, timeout=15, command_timeout=60, statement_cache_size=0, **options)
     try:
         result = await run(conn, args.mode, getattr(args, "seed", False))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.mode == "check":
-            bad = (result["missing_columns"] or result["wrong_column_types"]
-                   or result["public_privileges"] or result["unindexed_foreign_keys"]
-                   or result["missing_or_invalid_unique_indexes"]
-                   or any(not row["rowsecurity"] for row in result["rls"]))
+            bad = (
+                result["missing_columns"]
+                or result["wrong_column_types"]
+                or result["public_privileges"]
+                or result["unindexed_foreign_keys"]
+                or result["missing_or_invalid_unique_indexes"]
+                or any(not row["rowsecurity"] for row in result["rls"])
+            )
             return 1 if bad else 0
         return 0
     finally:
@@ -275,7 +345,9 @@ if __name__ == "__main__":
     commands = parser.add_subparsers(dest="mode", required=True)
     commands.add_parser("check", help="Read-only schema, row-count and table-access report")
     bootstrap = commands.add_parser("bootstrap", help="Create application tables in a fresh database")
-    bootstrap.add_argument("--seed", action="store_true", help="Load demo catalog snapshot and coherent business fixtures once")
+    bootstrap.add_argument(
+        "--seed", action="store_true", help="Load demo catalog snapshot and coherent business fixtures once"
+    )
     commands.add_parser("upgrade", help="Apply pending migrations without loading seed")
     try:
         sys.exit(asyncio.run(main(parser.parse_args())))
@@ -284,6 +356,9 @@ if __name__ == "__main__":
         sys.exit(1)
     except (TimeoutError, asyncpg.PostgresError, OSError, ValueError) as exc:
         # Database error text can contain connection details or row data. Keep it private.
-        print(f"Failed ({type(exc).__name__}); no SQL error was ignored. "
-              "Verify the target, credentials and schema before retrying.", file=sys.stderr)
+        print(
+            f"Failed ({type(exc).__name__}); no SQL error was ignored. "
+            "Verify the target, credentials and schema before retrying.",
+            file=sys.stderr,
+        )
         sys.exit(1)

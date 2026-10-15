@@ -75,6 +75,7 @@ def test_partial_import_rolls_back_and_active_is_unique(database, tmp_path, monk
     cur.execute("SELECT id FROM ai_data.datasets WHERE is_active")
     old = cur.fetchone()
     cur.execute("SAVEPOINT failed_import")
+    original_verify = importer.verify
     monkeypatch.setattr(importer, "verify", lambda *args: (_ for _ in ()).throw(ValueError("verification failed")))
     with pytest.raises(ValueError, match="verification failed"):
         importer.apply(cur, source, "invalid")
@@ -83,6 +84,10 @@ def test_partial_import_rolls_back_and_active_is_unique(database, tmp_path, monk
     assert cur.fetchone() == old
     cur.execute("SELECT count(*) AS n FROM ai_data.datasets WHERE content_sha256=%s", (source["sha256"],))
     assert cur.fetchone()["n"] == 0
+    # A fresh integration database may have no active dataset; provision one
+    # inside this test's rollback transaction before testing the unique index.
+    monkeypatch.setattr(importer, "verify", original_verify)
+    importer.apply(cur, source, "unique-active fixture")
     cur.execute("SAVEPOINT unique_active")
     with pytest.raises(psycopg2.IntegrityError):
         cur.execute("""INSERT INTO ai_data.datasets

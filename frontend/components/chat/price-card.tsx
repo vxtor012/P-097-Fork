@@ -21,7 +21,8 @@ export function PriceCard({ data }: { data: PriceQuoteData }) {
           model: data.model,
           version: data.version,
           color: data.color,
-          battery: data.battery_cost > 0 ? "buy" : "rent",
+          battery: data.battery_option,
+          accessories: data.accessories.map((item) => item.code),
           province: data.province,
           final_price: data.final_price,
           price_version: data.price_version,
@@ -153,7 +154,7 @@ export function PriceCard({ data }: { data: PriceQuoteData }) {
           <span>{downloading ? "Đang tạo..." : "Xuất PDF"}</span>
         </button>
         <Link
-          href={`/configurator/quote?model=${data.model}&version=${data.version}&color=${data.color}&battery=${data.battery_cost > 0 ? "buy" : "rent"}&province=${data.province}`}
+          href={`/configurator/quote?${new URLSearchParams({ model: data.model, version: data.version, color: data.color, battery: data.battery_option, province: data.province, accessories: data.accessories.map((item) => item.code).join(",") })}`}
           className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors"
         >
           <CheckCircle size={13} /> Báo giá chính thức

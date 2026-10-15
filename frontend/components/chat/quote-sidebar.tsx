@@ -31,7 +31,8 @@ function PriceQuoteSidebar({ data }: { data: PriceQuoteData }) {
           model: data.model,
           version: data.version,
           color: data.color,
-          battery: data.battery_cost > 0 ? "buy" : "rent",
+          battery: data.battery_option,
+          accessories: data.accessories.map((item) => item.code),
           province: data.province,
           final_price: data.final_price,
           price_version: data.price_version,
@@ -126,7 +127,7 @@ function PriceQuoteSidebar({ data }: { data: PriceQuoteData }) {
 
       <div className="px-5 py-4 border-t space-y-2">
         <Link
-          href={`/configurator/quote?model=${data.model}&version=${data.version}&color=${data.color}&battery=${data.battery_cost > 0 ? "buy" : "rent"}&province=${data.province}`}
+          href={`/configurator/quote?${new URLSearchParams({ model: data.model, version: data.version, color: data.color, battery: data.battery_option, province: data.province, accessories: data.accessories.map((item) => item.code).join(",") })}`}
           className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors flex items-center justify-center gap-2"
         >
           <CheckCircle2 size={15} />

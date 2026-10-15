@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     cors_origins: str = "http://localhost:3000"
+    jwt_secret: str = ""
+    session_days: int = Field(default=7, ge=1, le=30)
 
     # LLM
     llm_provider: Literal["auto", "openai", "google"] = "auto"
@@ -29,8 +31,7 @@ class Settings(BaseSettings):
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
 
     # Database
-    database_url: str = "postgresql+asyncpg://vinfast:vinfast123@localhost:5432/vinfast_ai"
-
+    database_url: str = Field(min_length=1)
 
 
 @lru_cache

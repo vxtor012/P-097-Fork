@@ -1,11 +1,12 @@
 import io
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional
+from html import escape
+from typing import Any
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -42,11 +43,22 @@ def format_vnd(amount: Any) -> str:
         return "0 VNĐ"
 
 
-def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
+def generate_quote_pdf(quote_data: dict[str, Any]) -> bytes:
     """
     Generates a professional VinFast quotation PDF in bytes.
     Accepts quote dictionary or ORM Quote representation.
     """
+
+    def safe(value):
+        if isinstance(value, str):
+            return escape(value, quote=False)
+        if isinstance(value, dict):
+            return {key: safe(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [safe(item) for item in value]
+        return value
+
+    quote_data = safe(quote_data)
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -57,15 +69,13 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
         bottomMargin=28,
     )
 
-    styles = getSampleStyleSheet()
-
     # Define color scheme
-    c_primary = colors.HexColor("#003B7A")      # VinFast Navy Blue
-    c_secondary = colors.HexColor("#0F172A")    # Dark Slate
-    c_gold = colors.HexColor("#B48234")         # Gold accent
-    c_light_bg = colors.HexColor("#F8FAFC")     # Soft slate bg
-    c_border = colors.HexColor("#CBD5E1")       # Border grey
-    c_green = colors.HexColor("#15803D")        # Green discount
+    c_primary = colors.HexColor("#003B7A")  # VinFast Navy Blue
+    c_secondary = colors.HexColor("#0F172A")  # Dark Slate
+    c_gold = colors.HexColor("#B48234")  # Gold accent
+    c_light_bg = colors.HexColor("#F8FAFC")  # Soft slate bg
+    c_border = colors.HexColor("#CBD5E1")  # Border grey
+    c_green = colors.HexColor("#15803D")  # Green discount
 
     # Typography styles
     style_company = ParagraphStyle(
@@ -185,11 +195,13 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
     buyer_name = quote_data.get("buyer_name") or "Quý Khách Hàng"
     buyer_phone = quote_data.get("buyer_phone") or "Chưa cung cấp"
     status_str = (quote_data.get("status") or "pending").upper()
-    price_version = quote_data.get("price_version") or "2025-Q4-v1"
+    price_version = quote_data.get("price_version") or "Chưa xác nhận"
     seller_note = quote_data.get("seller_note") or ""
 
     # Snapshot data extraction
     snapshot = quote_data.get("price_snapshot") or {}
+    dealer_name = (snapshot.get("dealer") or {}).get("name") or "Chưa chọn đại lý"
+    validity = "Bảng dự toán; giá chính thức cần đại lý xác nhận."
     base_price = snapshot.get("base_price") or quote_data.get("final_price") or 0
     battery_cost = snapshot.get("battery_cost") or 0
     battery_mode = "Mua pin" if battery_cost > 0 or quote_data.get("battery") == "buy" else "Thuê pin"
@@ -203,28 +215,35 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
     # ── 1. Top Header ──────────────────────────────────────────
     header_data = [
         [
-            Paragraph("<b>VINFAST AUTO VIỆT NAM</b>", style_company),
+            Paragraph("<b>AUTOQUOTE AI</b>", style_company),
             Paragraph(f"<b>Số báo giá:</b> VF-BG-{short_id}", style_meta_bold),
         ],
         [
-            Paragraph("CÔNG TY TNHH KINH DOANH THƯƠNG MẠI VÀ DỊCH VỤ VINFAST<br/>Hotline: 1900 23 23 89 · Email: cskh@vinfastauto.com · vinfastauto.com", style_company_sub),
-            Paragraph(f"<b>Ngày lập:</b> {date_str}<br/><b>Hiệu lực:</b> 15 ngày kể từ ngày lập", style_meta),
+            Paragraph(
+                "Bảng dự toán cấu hình xe<br/>Đơn vị tiếp nhận: " + dealer_name,
+                style_company_sub,
+            ),
+            Paragraph(f"<b>Ngày lập:</b> {date_str}<br/>{validity}", style_meta),
         ],
     ]
     t_header = Table(header_data, colWidths=[350, 180])
-    t_header.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-    ]))
+    t_header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
     story.append(t_header)
     story.append(Spacer(1, 8))
     story.append(HRFlowable(width="100%", thickness=1.5, color=c_primary, spaceAfter=10))
 
     # ── 2. Document Title ───────────────────────────────────────
-    story.append(Paragraph("BẢNG BÁO GIÁ XE ĐIỆN VINFAST CHÍNH HÃNG", style_title))
-    story.append(Paragraph("OFFICIAL ELECTRIC VEHICLE QUOTATION", style_title_en))
+    story.append(Paragraph("BẢNG DỰ TOÁN XE ĐIỆN VINFAST", style_title))
+    story.append(Paragraph("CONFIGURATION PRICE SNAPSHOT", style_title_en))
     story.append(Spacer(1, 10))
 
     # ── 3. Customer & Dealership Info Box ───────────────────────
@@ -235,11 +254,11 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
         ],
         [
             Paragraph(f"<b>Họ và tên:</b> {buyer_name}", style_td),
-            Paragraph("<b>Đại lý:</b> Hệ thống Showroom VinFast Chính Hãng", style_td),
+            Paragraph(f"<b>Đại lý:</b> {dealer_name}", style_td),
         ],
         [
             Paragraph(f"<b>Số điện thoại:</b> {buyer_phone}", style_td),
-            Paragraph("<b>Tư vấn viên:</b> Ban Kinh Doanh & Dịch Vụ Khách Hàng", style_td),
+            Paragraph("<b>Xác nhận giá:</b> Theo duyệt của đại lý", style_td),
         ],
         [
             Paragraph(f"<b>Khu vực lăn bánh:</b> {province}", style_td),
@@ -247,15 +266,19 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
         ],
     ]
     t_cust = Table(cust_rows, colWidths=[265, 265])
-    t_cust.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), c_light_bg),
-        ("BOX", (0, 0), (-1, -1), 0.5, c_border),
-        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-    ]))
+    t_cust.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), c_light_bg),
+                ("BOX", (0, 0), (-1, -1), 0.5, c_border),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
     story.append(t_cust)
     story.append(Spacer(1, 10))
 
@@ -268,13 +291,17 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
         ]
     ]
     t_veh = Table(veh_banner, colWidths=[210, 160, 160])
-    t_veh.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EFF6FF")),
-        ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#93C5FD")),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-    ]))
+    t_veh.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#EFF6FF")),
+                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#93C5FD")),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
     story.append(t_veh)
     story.append(Spacer(1, 10))
 
@@ -290,42 +317,50 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
 
     idx = 1
     # 5.1 Base Vehicle Price
-    cost_data.append([
-        Paragraph(str(idx), style_td),
-        Paragraph(f"<b>Giá xe VinFast {model} {version}</b>", style_td),
-        Paragraph("Đã bao gồm thuế GTGT (10%)", style_td),
-        Paragraph(format_vnd(base_price), style_td_right_bold),
-    ])
+    cost_data.append(
+        [
+            Paragraph(str(idx), style_td),
+            Paragraph(f"<b>Giá xe VinFast {model} {version}</b>", style_td),
+            Paragraph("Theo bảng giá cấu hình được lưu", style_td),
+            Paragraph(format_vnd(base_price), style_td_right_bold),
+        ]
+    )
     idx += 1
 
     # 5.2 Battery
     if battery_cost > 0:
-        cost_data.append([
-            Paragraph(str(idx), style_td),
-            Paragraph("<b>Chi phí mua đứt Pin</b>", style_td),
-            Paragraph("Quyền sở hữu Pin trọn đời, bảo hành 10 năm", style_td),
-            Paragraph(format_vnd(battery_cost), style_td_right_bold),
-        ])
+        cost_data.append(
+            [
+                Paragraph(str(idx), style_td),
+                Paragraph("<b>Chi phí mua đứt Pin</b>", style_td),
+                Paragraph("Theo phương án mua pin đã chọn", style_td),
+                Paragraph(format_vnd(battery_cost), style_td_right_bold),
+            ]
+        )
         idx += 1
-    else:
-        cost_data.append([
-            Paragraph(str(idx), style_td),
-            Paragraph("<b>Gói thuê Pin chính hãng</b>", style_td),
-            Paragraph("Bảo dưỡng, thay thế miễn phí khi pin < 70%", style_td),
-            Paragraph("Theo chính sách hàng tháng", style_td_right),
-        ])
+    elif battery_mode == "Thuê pin":
+        cost_data.append(
+            [
+                Paragraph(str(idx), style_td),
+                Paragraph("<b>Gói thuê Pin chính hãng</b>", style_td),
+                Paragraph("Phí thuê hàng tháng không cộng vào tổng mua xe", style_td),
+                Paragraph(format_vnd(snapshot.get("battery_rent", 0)) + "/tháng", style_td_right),
+            ]
+        )
         idx += 1
 
     # 5.3 Accessories
     if acc_list:
         acc_names = ", ".join([a.get("name") if isinstance(a, dict) else str(a) for a in acc_list])
         acc_total = sum([a.get("price", 0) if isinstance(a, dict) else 0 for a in acc_list])
-        cost_data.append([
-            Paragraph(str(idx), style_td),
-            Paragraph("<b>Phụ kiện chính hãng chọn thêm</b>", style_td),
-            Paragraph(acc_names, style_td),
-            Paragraph(format_vnd(acc_total), style_td_right_bold),
-        ])
+        cost_data.append(
+            [
+                Paragraph(str(idx), style_td),
+                Paragraph("<b>Phụ kiện chính hãng chọn thêm</b>", style_td),
+                Paragraph(acc_names, style_td),
+                Paragraph(format_vnd(acc_total), style_td_right_bold),
+            ]
+        )
         idx += 1
 
     # 5.4 Rolling Fees Breakdown
@@ -337,18 +372,20 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
     total_rolling = reg_fee + plate_fee + road_fee + insp_fee + ins_fee
 
     rolling_details = (
-        f"Lệ phí trước bạ (0% NĐ 10/2022/NĐ-CP): {format_vnd(reg_fee)} | "
+        f"Lệ phí trước bạ: {format_vnd(reg_fee)} | "
         f"Biển số: {format_vnd(plate_fee)} | "
         f"Đường bộ (1 năm): {format_vnd(road_fee)} | "
         f"Đăng kiểm: {format_vnd(insp_fee)} | "
         f"BH TNDS: {format_vnd(ins_fee)}"
     )
-    cost_data.append([
-        Paragraph(str(idx), style_td),
-        Paragraph("<b>Chi phí lăn bánh dự tính</b>", style_td),
-        Paragraph(rolling_details, style_td),
-        Paragraph(format_vnd(total_rolling), style_td_right_bold),
-    ])
+    cost_data.append(
+        [
+            Paragraph(str(idx), style_td),
+            Paragraph("<b>Chi phí lăn bánh dự tính</b>", style_td),
+            Paragraph(rolling_details, style_td),
+            Paragraph(format_vnd(total_rolling), style_td_right_bold),
+        ]
+    )
     idx += 1
 
     # 5.5 Promotions & Discounts
@@ -356,80 +393,108 @@ def generate_quote_pdf(quote_data: Dict[str, Any]) -> bytes:
         for p in promos:
             p_name = p.get("name", "Khuyến mại chính hãng")
             p_val = p.get("value", 0)
-            cost_data.append([
-                Paragraph(str(idx), style_td),
-                Paragraph(f"<b>Ưu đãi: {p_name}</b>", style_td_green),
-                Paragraph("Khấu trừ trực tiếp vào giá lăn bánh", style_td),
-                Paragraph(f"-{format_vnd(p_val)}", style_td_right_green),
-            ])
+            cost_data.append(
+                [
+                    Paragraph(str(idx), style_td),
+                    Paragraph(f"<b>Ưu đãi: {p_name}</b>", style_td_green),
+                    Paragraph("Khấu trừ trực tiếp vào giá lăn bánh", style_td),
+                    Paragraph(f"-{format_vnd(p_val)}", style_td_right_green),
+                ]
+            )
             idx += 1
 
     # 5.6 Total Row
-    cost_data.append([
-        Paragraph("", style_td),
-        Paragraph("<b>TỔNG GIÁ TRỊ LĂN BÁNH DỰ KIẾN</b>", style_td_bold),
-        Paragraph("<b>Đã bao gồm xe, pin/thuê pin, các loại phí & ưu đãi</b>", style_td),
-        Paragraph(f"<b>{format_vnd(final_price)}</b>", style_td_right_bold),
-    ])
+    cost_data.append(
+        [
+            Paragraph("", style_td),
+            Paragraph("<b>TỔNG GIÁ TRỊ LĂN BÁNH DỰ KIẾN</b>", style_td_bold),
+            Paragraph("<b>Xe, mua pin nếu chọn, phụ kiện, phí và ưu đãi</b>", style_td),
+            Paragraph(f"<b>{format_vnd(final_price)}</b>", style_td_right_bold),
+        ]
+    )
 
-    t_cost = Table(cost_data, colWidths=[25, 175, 210, 120])
-    t_cost.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), c_primary),
-        ("ALIGN", (0, 0), (0, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -2), 0.5, c_border),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#FEF3C7")),
-        ("BOX", (0, -1), (-1, -1), 1.5, c_gold),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
+    t_cost = Table(cost_data, colWidths=[30, 175, 205, 120])
+    t_cost.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), c_primary),
+                ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("GRID", (0, 0), (-1, -2), 0.5, c_border),
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#FEF3C7")),
+                ("BOX", (0, -1), (-1, -1), 1.5, c_gold),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
     story.append(t_cost)
     story.append(Spacer(1, 10))
 
     # ── 6. Warranty & Commitment Notes ──────────────────────────
     notes = [
-        "<b>ĐẶC QUYỀN KHI SỞ HỮU XE ĐIỆN VINFAST:</b>",
-        "• <b>Bảo hành chính hãng:</b> 7 - 10 năm hoặc 160.000 - 200.000 km (tùy dòng xe). Pin bảo hành lên tới 10 năm.",
-        "• <b>Cứu hộ miễn phí 24/7:</b> Toàn quốc trong suốt thời gian bảo hành qua tổng đài 1900 23 23 89.",
-        "• <b>Hạ tầng trạm sạc:</b> Tiếp cận hệ thống trạm sạc phủ rộng 63 tỉnh thành do V-GREEN phát triển.",
+        "<b>LƯU Ý VỀ BẢNG DỰ TOÁN:</b>",
+        "• Giá và ưu đãi phản ánh dữ liệu tại thời điểm lập; đại lý xác nhận điều kiện trước khi giao dịch.",
+        "• Phí thuê pin định kỳ không nằm trong tổng chi phí mua xe.",
+        "• Chính sách bảo hành, giao xe và các khoản phí khác cần được đại lý xác nhận riêng.",
     ]
     if seller_note:
         notes.append(f"• <b>Ghi chú từ tư vấn viên:</b> {seller_note}")
 
     notes_p = Paragraph("<br/>".join(notes), style_meta)
     t_notes = Table([[notes_p]], colWidths=[530])
-    t_notes.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), c_light_bg),
-        ("BOX", (0, 0), (-1, -1), 0.5, c_border),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-    ]))
+    t_notes.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), c_light_bg),
+                ("BOX", (0, 0), (-1, -1), 0.5, c_border),
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ]
+        )
+    )
     story.append(t_notes)
     story.append(Spacer(1, 15))
 
     # ── 7. Signatures ───────────────────────────────────────────
     sig_data = [
         [
-            Paragraph("<b>ĐẠI DIỆN ĐẠI LÝ VINFAST</b><br/><i>(Ký, ghi rõ họ tên và đóng dấu)</i>", ParagraphStyle("Sig1", fontName=FONT_NAME, fontSize=8.5, alignment=1)),
-            Paragraph("<b>XÁC NHẬN CỦA KHÁCH HÀNG</b><br/><i>(Ký và ghi rõ họ tên)</i>", ParagraphStyle("Sig2", fontName=FONT_NAME, fontSize=8.5, alignment=1)),
+            Paragraph(
+                "<b>ĐẠI DIỆN ĐƠN VỊ TƯ VẤN</b><br/><i>(Ký, ghi rõ họ tên)</i>",
+                ParagraphStyle("Sig1", fontName=FONT_NAME, fontSize=8.5, alignment=1),
+            ),
+            Paragraph(
+                "<b>XÁC NHẬN CỦA KHÁCH HÀNG</b><br/><i>(Ký và ghi rõ họ tên)</i>",
+                ParagraphStyle("Sig2", fontName=FONT_NAME, fontSize=8.5, alignment=1),
+            ),
         ],
         [
             Spacer(1, 45),
             Spacer(1, 45),
         ],
         [
-            Paragraph("<b>VINFAST OFFICIAL</b>", ParagraphStyle("Sig1B", fontName=FONT_BOLD, fontSize=8.5, alignment=1, textColor=c_primary)),
-            Paragraph(f"<b>{buyer_name}</b>", ParagraphStyle("Sig2B", fontName=FONT_BOLD, fontSize=8.5, alignment=1, textColor=c_secondary)),
+            Paragraph(
+                f"<b>{dealer_name}</b>",
+                ParagraphStyle("Sig1B", fontName=FONT_BOLD, fontSize=8.5, alignment=1, textColor=c_primary),
+            ),
+            Paragraph(
+                f"<b>{buyer_name}</b>",
+                ParagraphStyle("Sig2B", fontName=FONT_BOLD, fontSize=8.5, alignment=1, textColor=c_secondary),
+            ),
         ],
     ]
     t_sig = Table(sig_data, colWidths=[265, 265])
-    t_sig.setStyle(TableStyle([
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 2),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-    ]))
+    t_sig.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+            ]
+        )
+    )
     story.append(t_sig)
 
     doc.build(story)

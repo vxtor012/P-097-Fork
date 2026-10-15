@@ -1,90 +1,59 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { getQueryClient } from "@/lib/query-client";
 
 export type UserRole = "buyer" | "seller" | "warehouse" | "warehouse_manager" | "admin";
-
 export interface AuthUser {
-  id:       string;
-  name:     string;
-  email:    string;
-  role:     UserRole;
-  dealerId: string | null;
-  dealer:   string | null;
-  branchId: string | null;
-  storeIds: string[] | null;
+  id: string; name: string; email: string; role: UserRole;
+  dealerId: string | null; dealer: string | null; branchId: string | null; storeIds: string[] | null;
 }
-
 interface AuthState {
-  user:   AuthUser | null;
-  token:  string | null;
-  login:  (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
-  logout: () => void;
+  user: AuthUser | null;
+  initialized: boolean;
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
+  logout: () => Promise<boolean>;
+  refreshSession: () => Promise<void>;
 }
-
 export const ROLE_HOME: Record<UserRole, string> = {
-  buyer:             "/configurator",
-  seller:            "/seller/dashboard",
-  warehouse:         "/warehouse/dashboard",
-  warehouse_manager: "/warehouse/dashboard",
-  admin:             "/seller/dashboard",
+  buyer: "/configurator", seller: "/seller/dashboard", warehouse: "/warehouse/dashboard",
+  warehouse_manager: "/warehouse/dashboard", admin: "/seller/dashboard",
 };
-
-// ── Helper: set/remove cookie ────────────────────────────────
-function setCookie(name: string, value: string, days = 7) {
-  if (typeof document === "undefined") return;
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
-}
-
-function removeCookie(name: string) {
-  if (typeof document === "undefined") return;
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
-}
-
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      user:  null,
-      token: null,
-
-      login: async (email, password) => {
-        try {
-          const res = await fetch("/api/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email, password }),
-          });
-
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            return {
-              ok: false,
-              error: data.detail || "Email hoặc mật khẩu không chính xác",
-            };
-          }
-
-          const user: AuthUser = data.user;
-          const token: string = data.token;
-
-          set({ user, token });
-
-          // Lưu vào cookie để middleware Next.js đọc được
-          setCookie("vf-auth", JSON.stringify({ state: { user, token } }));
-
-          return { ok: true };
-        } catch (err) {
-          console.error("Login request failed:", err);
-          return { ok: false, error: "Không thể kết nối tới máy chủ xác thực" };
-        }
-      },
-
-      logout: () => {
-        set({ user: null, token: null });
-        removeCookie("vf-auth");
-      },
-    }),
-    {
-      name: "vf-auth-storage",
-    }
-  )
-);
+let sessionRevision = 0;
+export const useAuthStore = create<AuthState>()((set) => ({
+  user: null, initialized: false,
+  refreshSession: async () => {
+    const revision = sessionRevision;
+    try {
+      const res = await fetch("/api/auth/me", { cache: "no-store" });
+      const data = res.ok ? await res.json() : null;
+      if (revision !== sessionRevision) return;
+      if (res.ok) set({ user: data.user, initialized: true });
+      else if (res.status === 401 || res.status === 403) {
+        set({ user: null, initialized: true });
+        getQueryClient().clear();
+      } else set({ initialized: true });
+    } catch { if (revision === sessionRevision) set({ initialized: true }); }
+  },
+  login: async (email, password) => {
+    const revision = ++sessionRevision;
+    try {
+      const res = await fetch("/api/auth/login", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+      const data = await res.json().catch(() => ({}));
+      if (revision !== sessionRevision) return { ok: false, error: "Phiên đăng nhập đã thay đổi." };
+      if (!res.ok) return { ok: false, error: typeof data.detail === "string" ? data.detail : "Không thể đăng nhập. Vui lòng kiểm tra thông tin." };
+      getQueryClient().clear();
+      set({ user: data.user, initialized: true });
+      return { ok: true };
+    } catch { return { ok: false, error: "Không thể kết nối máy chủ đăng nhập." }; }
+  },
+  logout: async () => {
+    ++sessionRevision;
+    try {
+      const res = await fetch("/api/auth/logout", { method: "POST" });
+      if (!res.ok && res.status !== 401) return false;
+      set({ user: null, initialized: true });
+      getQueryClient().clear();
+      return true;
+    } catch { return false; }
+  },
+}));

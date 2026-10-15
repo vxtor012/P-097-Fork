@@ -1,5 +1,6 @@
 services:
   postgres:
+    profiles: ["local-db"]
     image: pgvector/pgvector:pg16
     container_name: vinfast_postgres
     environment:
@@ -11,7 +12,7 @@ services:
       - ./scripts/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./scripts/db/seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vinfast -d vinfast_ai"]
       interval: 5s
@@ -40,12 +41,10 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=${DOCKER_DATABASE_URL:-postgresql+asyncpg://vinfast:vinfast123@postgres:5432/vinfast_ai}
+      - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL to the Supabase PostgreSQL connection string}
       - REDIS_URL=${DOCKER_REDIS_URL:-redis://redis:6379/0}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_started
     networks:

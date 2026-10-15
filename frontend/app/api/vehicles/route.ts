@@ -9,6 +9,7 @@ export async function GET() {
     const res = await fetch(`${BACKEND}/api/v1/vehicles`, {
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!res.ok) {

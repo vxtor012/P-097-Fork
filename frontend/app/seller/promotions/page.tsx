@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import type { PromotionResponse } from "@/lib/api-types";
+
+import { useState } from "react";
+import { useStaffData, apiRequest, refreshStaffData } from "@/hooks/use-staff-data";
 import { formatVND } from "@/lib/format";
 import { Plus, Pencil, Trash2, X, ToggleLeft, ToggleRight, Sparkles, RefreshCw } from "lucide-react";
 
@@ -16,120 +19,58 @@ export interface PromotionItem {
   endDate: string;
   isActive: boolean;
   usageCount: number;
+  editable?: boolean;
+  currentlyValid?: boolean;
+}
+
+function promotionDate(value: string) {
+  return new Date(value.endsWith('Z') || /[+-]\d\d:\d\d$/.test(value) ? value : value + 'Z')
+    .toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
 }
 
 export default function PromotionsPage() {
-  const [promos, setPromos] = useState<PromotionItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const query = useStaffData<{ promotions: PromotionResponse[] }>('seller-promotions', '/api/promotions');
+  const promos: PromotionItem[] = (query.data?.promotions ?? []).map((p) => ({
+    id: p.id, name: p.name, description: p.description ?? '', model: p.model, province: p.province,
+    discountType: p.discount_type, discountValue: p.discount_value, startDate: promotionDate(p.start_date),
+    endDate: promotionDate(p.end_date), isActive: p.is_active, usageCount: p.usage_count, editable: p.editable,
+    currentlyValid: p.currently_valid,
+  }));
+  const loading = query.isPending;
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<PromotionItem | null>(null);
-
-  const fetchPromotions = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/promotions");
-      if (res.ok) {
-        const data = await res.json();
-        const mapped: PromotionItem[] = (data.promotions || []).map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          description: p.description || "",
-          model: p.model || "ALL",
-          province: p.province || null,
-          discountType: p.discount_type || "fixed",
-          discountValue: Number(p.discount_value) || 0,
-          startDate: p.start_date ? p.start_date.slice(0, 10) : "",
-          endDate: p.end_date ? p.end_date.slice(0, 10) : "",
-          isActive: Boolean(p.is_active),
-          usageCount: Number(p.usage_count) || 0,
-        }));
-        setPromos(mapped);
-      }
-    } catch (err) {
-      console.error("Failed to fetch promotions:", err);
-    } finally {
-      setLoading(false);
-    }
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const change = async (url: string, method: string, payload?: object) => {
+    await apiRequest(url, { method, headers: { 'Content-Type': 'application/json' }, body: payload ? JSON.stringify(payload) : undefined });
+    await refreshStaffData();
   };
-
-  useEffect(() => {
-    fetchPromotions();
-  }, []);
-
   const handleToggle = async (id: string, current: boolean) => {
-    try {
-      const res = await fetch(`/api/promotions/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ is_active: !current }),
-      });
-      if (res.ok) {
-        setPromos((prev) =>
-          prev.map((x) => (x.id === id ? { ...x, isActive: !current } : x))
-        );
-      }
-    } catch (err) {
-      console.error("Failed to toggle promotion:", err);
-    }
+    if (busy) return;
+    setBusy(true); setActionError('');
+    try { await change('/api/promotions/' + id, 'PATCH', { is_active: !current }); }
+    catch (e) { setActionError(e instanceof Error ? e.message : 'Cập nhật chưa thành công.'); }
+    finally { setBusy(false); }
   };
-
   const handleDelete = async (id: string) => {
-    if (!confirm("Vô hiệu hoá khuyến mãi này?")) return;
-    try {
-      const res = await fetch(`/api/promotions/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        setPromos((prev) =>
-          prev.map((x) => (x.id === id ? { ...x, isActive: false } : x))
-        );
-      }
-    } catch (err) {
-      console.error("Failed to delete promotion:", err);
-    }
+    if (busy || !confirm('Vô hiệu hóa khuyến mãi này?')) return;
+    setBusy(true); setActionError('');
+    try { await change('/api/promotions/' + id, 'DELETE'); }
+    catch (e) { setActionError(e instanceof Error ? e.message : 'Thao tác chưa thành công.'); }
+    finally { setBusy(false); }
   };
-
-  const handleSave = async (data: Omit<PromotionItem, "id" | "usageCount">) => {
-    try {
-      const payload = {
-        name: data.name,
-        description: data.description,
-        model: data.model,
-        province: data.province,
-        discount_type: data.discountType,
-        discount_value: data.discountValue,
-        start_date: data.startDate ? `${data.startDate}T00:00:00` : new Date().toISOString(),
-        end_date: data.endDate ? `${data.endDate}T23:59:59` : new Date().toISOString(),
-        is_active: data.isActive,
-      };
-
-      if (editing) {
-        const res = await fetch(`/api/promotions/${editing.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (res.ok) {
-          await fetchPromotions();
-        }
-      } else {
-        const res = await fetch("/api/promotions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (res.ok) {
-          await fetchPromotions();
-        }
-      }
-      setShowForm(false);
-      setEditing(null);
-    } catch (err) {
-      console.error("Failed to save promotion:", err);
-      alert("Không thể lưu khuyến mãi. Vui lòng kiểm tra lại thông tin!");
-    }
+  const handleSave = async (data: Omit<PromotionItem, 'id' | 'usageCount'>) => {
+    await change(editing ? '/api/promotions/' + editing.id : '/api/promotions', editing ? 'PATCH' : 'POST', {
+      name: data.name, description: data.description, model: data.model, province: data.province,
+      discount_type: data.discountType, discount_value: data.discountValue,
+      start_date: data.startDate + 'T00:00:00+07:00', end_date: data.endDate + 'T23:59:59+07:00', is_active: data.isActive,
+    });
+    setShowForm(false); setEditing(null);
   };
 
   return (
     <div className="p-6 space-y-6">
+      {(query.error || actionError) && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{actionError || query.error?.message}</p>}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -138,7 +79,7 @@ export default function PromotionsPage() {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={fetchPromotions}
+            onClick={() => query.refetch()}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-2 border border-slate-200 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
           >
@@ -161,17 +102,17 @@ export default function PromotionsPage() {
       <div className="grid grid-cols-3 gap-4">
         {[
           {
-            label: "Đang kích hoạt",
-            value: promos.filter((p) => p.isActive).length,
+            label: "Đang hiệu lực",
+            value: promos.filter((p) => p.currentlyValid).length,
             color: "text-green-600 bg-green-50",
           },
           {
-            label: "Đã tạm dừng / hết hạn",
-            value: promos.filter((p) => !p.isActive).length,
+            label: "Chưa hiệu lực / tạm dừng",
+            value: promos.filter((p) => !p.currentlyValid).length,
             color: "text-slate-500 bg-slate-50",
           },
           {
-            label: "Tổng lượt dùng",
+            label: "Lượt báo giá áp dụng",
             value: promos.reduce((s, p) => s + p.usageCount, 0),
             color: "text-blue-600 bg-blue-50",
           },
@@ -193,7 +134,7 @@ export default function PromotionsPage() {
                 <th className="px-4 py-3 text-left">Dòng xe</th>
                 <th className="px-4 py-3 text-left">Giảm giá</th>
                 <th className="px-4 py-3 text-left">Thời gian</th>
-                <th className="px-4 py-3 text-center">Lượt dùng</th>
+                <th className="px-4 py-3 text-center">Lượt báo giá</th>
                 <th className="px-4 py-3 text-center">Trạng thái</th>
                 <th className="px-4 py-3 text-center">Thao tác</th>
               </tr>
@@ -240,6 +181,7 @@ export default function PromotionsPage() {
                     </td>
                     <td className="px-4 py-4 text-center">
                       <button
+                        disabled={busy || !p.editable}
                         onClick={() => handleToggle(p.id, p.isActive)}
                         className="transition-transform active:scale-95"
                       >
@@ -258,6 +200,7 @@ export default function PromotionsPage() {
                             setShowForm(true);
                           }}
                           className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors"
+                          disabled={busy || !p.editable}
                           title="Sửa"
                         >
                           <Pencil size={15} />
@@ -265,6 +208,7 @@ export default function PromotionsPage() {
                         <button
                           onClick={() => handleDelete(p.id)}
                           className="p-1.5 rounded-lg hover:bg-red-50 text-red-500 transition-colors"
+                          disabled={busy || !p.editable}
                           title="Vô hiệu hoá"
                         >
                           <Trash2 size={15} />
@@ -300,28 +244,34 @@ function PromotionForm({
   onClose,
 }: {
   initial: PromotionItem | null;
-  onSave: (data: Omit<PromotionItem, "id" | "usageCount">) => void;
+  onSave: (data: Omit<PromotionItem, "id" | "usageCount">) => Promise<void>;
   onClose: () => void;
 }) {
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => ({
     name: initial?.name ?? "",
     description: initial?.description ?? "",
     model: initial?.model ?? "ALL",
     province: initial?.province ?? "",
     discountType: (initial?.discountType ?? "fixed") as "fixed" | "percent",
     discountValue: initial?.discountValue ?? 0,
-    startDate: initial?.startDate ?? new Date().toISOString().slice(0, 10),
+    startDate: initial?.startDate ?? promotionDate(new Date().toISOString()),
     endDate:
       initial?.endDate ??
-      new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10),
+      promotionDate(new Date(Date.now() + 30 * 864e5).toISOString()),
     isActive: initial?.isActive ?? true,
-  });
+  }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const set = (k: string, v: unknown) => setForm((p) => ({ ...p, [k]: v }));
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({ ...form, province: form.province || null });
+    if (saving) return;
+    setSaving(true); setError('');
+    try { await onSave({ ...form, province: form.province || null }); }
+    catch (error) { setError(error instanceof Error ? error.message : 'Lưu khuyến mãi chưa thành công.'); }
+    finally { setSaving(false); }
   };
 
   return (
@@ -331,7 +281,7 @@ function PromotionForm({
           <h2 className="font-bold text-slate-900 text-lg">
             {initial ? "Sửa chương trình khuyến mãi" : "Thêm khuyến mãi mới"}
           </h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors">
+          <button disabled={saving} onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50">
             <X size={18} />
           </button>
         </div>
@@ -442,9 +392,11 @@ function PromotionForm({
             </span>
           </div>
 
+          {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
           <div className="flex gap-3 pt-2">
             <button
               type="button"
+              disabled={saving}
               onClick={onClose}
               className="flex-1 py-2.5 rounded-xl border border-slate-300 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
             >
@@ -452,6 +404,7 @@ function PromotionForm({
             </button>
             <button
               type="submit"
+              disabled={saving}
               className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors shadow-sm"
             >
               {initial ? "Cập nhật" : "Tạo mới"}

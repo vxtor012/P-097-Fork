@@ -1,4 +1,23 @@
-export const VEHICLES = {
+export interface VehicleColor {
+  id: string;
+  label: string;
+  hex: string;
+  imageUrl?: string;
+  image_url?: string;
+  roofHex?: string;
+  roof_hex?: string;
+}
+
+export interface Vehicle {
+  label: string;
+  model3d: string;
+  image: string;
+  versions: { id: string; label: string; price: number; colorPrices?: Record<string, number> }[];
+  colors: VehicleColor[];
+  battery: { buy: number; rent: number };
+}
+
+export const VEHICLES: Record<"VF3" | "VF5" | "VF6" | "VF7" | "VF8" | "VF9", Vehicle> = {
   "VF3": {
     label: "VF 3",
     model3d: "/cars/models/vinfast-vf3.glb",

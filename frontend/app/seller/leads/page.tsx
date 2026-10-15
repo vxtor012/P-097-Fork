@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import type { LeadResponse } from "@/lib/api-types";
+
+import { useState } from "react";
+import { useStaffData, apiRequest, refreshStaffData } from "@/hooks/use-staff-data";
 import { formatVND } from "@/lib/format";
 import { MessageCircle, Phone, Search, MapPin, Car, DollarSign, Clock, RefreshCw } from "lucide-react";
 
@@ -15,6 +18,7 @@ export interface LeadItem {
   status: "new" | "contacted" | "quoted" | "closed_won" | "closed_lost";
   createdAt: string;
   lastMessage?: string;
+  assignedTo: string | null;
 }
 
 const STATUS_CONFIG: Record<
@@ -29,62 +33,33 @@ const STATUS_CONFIG: Record<
 };
 
 export default function LeadsPage() {
-  const [leads, setLeads] = useState<LeadItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [filterStatus, setFilter] = useState("all");
-  const [selected, setSelected] = useState<LeadItem | null>(null);
-
-  const fetchLeads = async () => {
-    setLoading(true);
+  const query = useStaffData<{ leads: LeadResponse[] }>('seller-leads', '/api/leads');
+  const leads: LeadItem[] = (query.data?.leads ?? []).map((l) => ({
+    id: l.id, sessionId: l.session_id, name: l.name ?? 'Khách hàng', phone: l.phone ?? '',
+    province: l.province ?? 'Chưa xác định', interestedIn: l.interested_in ?? 'Chưa chọn xe',
+    budget: Number(l.budget) || 0, status: l.status as LeadItem['status'],
+    createdAt: new Date(l.created_at + (l.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString('vi-VN'),
+    lastMessage: l.note ?? '', assignedTo: l.assigned_to,
+  }));
+  const loading = query.isPending;
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilter] = useState('all');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draftNote, setDraftNote] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const selected = leads.find((l) => l.id === selectedId) ?? null;
+  const setSelected = (lead: LeadItem | null) => { setSelectedId(lead?.id ?? null); setDraftNote(lead?.lastMessage ?? ''); };
+  const changeLead = async (url: string, method: string, body?: object) => {
+    if (saving) return;
+    setSaving(true); setActionError('');
     try {
-      const res = await fetch("/api/leads");
-      if (res.ok) {
-        const data = await res.json();
-        const mapped: LeadItem[] = (data.leads || []).map((l: any) => ({
-          id: l.id,
-          sessionId: l.session_id,
-          name: l.name || "Khách ẩn danh",
-          phone: l.phone || "Chưa có SĐT",
-          province: l.province || "Chưa xác định",
-          interestedIn: l.interested_in || "Chưa chọn xe",
-          budget: Number(l.budget) || 0,
-          status: (l.status in STATUS_CONFIG ? l.status : "new") as LeadItem["status"],
-          createdAt: l.created_at ? new Date(l.created_at).toLocaleDateString("vi-VN") : "Hôm nay",
-          lastMessage: l.note || "Tư vấn cấu hình xe",
-        }));
-        setLeads(mapped);
-      }
-    } catch (err) {
-      console.error("Failed to fetch leads:", err);
-    } finally {
-      setLoading(false);
-    }
+      await apiRequest(url, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      await refreshStaffData();
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Không cập nhật được khách hàng.'); }
+    finally { setSaving(false); }
   };
-
-  useEffect(() => {
-    fetchLeads();
-  }, []);
-
-  const handleStatusChange = async (leadId: string, newStatus: string) => {
-    try {
-      const res = await fetch(`/api/leads/${leadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      if (res.ok) {
-        setLeads((prev) =>
-          prev.map((l) => (l.id === leadId ? { ...l, status: newStatus as any } : l))
-        );
-        if (selected?.id === leadId) {
-          setSelected((prev) => (prev ? { ...prev, status: newStatus as any } : null));
-        }
-      }
-    } catch (err) {
-      console.error("Failed to update lead status:", err);
-    }
-  };
+  const handleStatusChange = (id: string, status: string) => changeLead('/api/leads/' + id, 'PATCH', { status });
 
   const filtered = leads.filter((l) => {
     const matchSearch =
@@ -97,6 +72,7 @@ export default function LeadsPage() {
 
   return (
     <div className="flex h-full">
+      {(query.error || actionError) && <p role="alert" className="absolute z-20 rounded-xl bg-red-50 p-3 text-sm text-red-700">{actionError || query.error?.message}</p>}
       {/* ── LEFT: List ── */}
       <div className="flex-1 p-6 space-y-4 overflow-y-auto">
         <div className="flex items-center justify-between">
@@ -107,7 +83,7 @@ export default function LeadsPage() {
             </p>
           </div>
           <button
-            onClick={fetchLeads}
+            onClick={() => query.refetch()}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
           >
@@ -244,6 +220,7 @@ export default function LeadsPage() {
           <div className="px-5 py-4 border-b">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Cập nhật trạng thái</p>
             <select
+              disabled={saving}
               value={selected.status}
               onChange={(e) => handleStatusChange(selected.id, e.target.value)}
               className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
@@ -257,6 +234,10 @@ export default function LeadsPage() {
           </div>
 
           <div className="px-5 py-4 space-y-2">
+            <textarea aria-label="Ghi chú khách hàng" value={draftNote} onChange={(e) => setDraftNote(e.target.value)} maxLength={2000} className="w-full rounded-xl border p-3 text-sm" />
+            <button disabled={saving} onClick={() => changeLead('/api/leads/' + selected.id, 'PATCH', { note: draftNote })} className="w-full rounded-xl border py-2 text-sm disabled:opacity-50">Lưu ghi chú</button>
+            {!selected.assignedTo && <button disabled={saving} onClick={() => changeLead('/api/leads/' + selected.id + '/claim', 'POST')} className="w-full rounded-xl bg-emerald-600 py-2 text-sm text-white disabled:opacity-50">Tiếp nhận khách hàng</button>}
+            {selected.assignedTo && <p className="text-xs text-slate-500">Khách hàng đã được phân công chăm sóc.</p>}
             <a
               href={`tel:${selected.phone}`}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"

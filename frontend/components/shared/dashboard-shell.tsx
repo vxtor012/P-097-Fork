@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Home, LogOut } from "lucide-react";
 import { useAuthStore } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
 
 export interface NavItem { href: string; label: string; icon: React.ComponentType<{ size?: number }> }
 
@@ -17,6 +18,11 @@ export function DashboardShell({ title, nav, children }: { title: string; nav: N
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuthStore();
+  const [logoutError, setLogoutError] = useState('');
+  const signOut = async () => {
+    if (await logout()) { router.replace('/'); router.refresh(); }
+    else setLogoutError('Đăng xuất chưa thành công. Vui lòng thử lại.');
+  };
   const item = (active: boolean) => cn("flex items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium transition", active ? "bg-blue-600 text-white" : "text-white/70 hover:bg-white/10 hover:text-white");
 
   return (
@@ -39,13 +45,15 @@ export function DashboardShell({ title, nav, children }: { title: string; nav: N
             </div>
           )}
           <Link href="/" className={item(false)}><Home size={18} />Về trang chủ</Link>
-          <button onClick={() => { logout(); router.push("/"); }} className={cn(item(false), "w-full text-red-300 hover:text-red-200")}><LogOut size={18} />Đăng xuất</button>
+          {logoutError && <p role="alert" className="px-4 text-xs text-red-300">{logoutError}</p>}
+          <button onClick={signOut} className={cn(item(false), "w-full text-red-300 hover:text-red-200")}><LogOut size={18} />Đăng xuất</button>
         </div>
       </aside>
       <div className="flex gap-2 overflow-x-auto bg-[#0b1220] p-3 md:hidden">
         {nav.map(({ href, label }) => (
           <Link key={href} href={href} className={cn("whitespace-nowrap rounded-full px-4 py-2 text-sm", pathname === href ? "bg-blue-600 text-white" : "bg-white/10 text-white/80")}>{label}</Link>
         ))}
+        <button onClick={signOut} className="whitespace-nowrap px-3 text-sm text-red-300">Đăng xuất</button>
       </div>
       <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
     </div>

@@ -1,6 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import type { QuoteResponse } from "@/lib/api-types";
+
+import { useState } from "react";
+import { useStaffData, apiRequest, refreshStaffData } from "@/hooks/use-staff-data";
 import { formatVND } from "@/lib/format";
 import { CheckCircle, XCircle, Clock, Eye, RefreshCw, Car, FileDown } from "lucide-react";
 
@@ -14,107 +17,51 @@ export interface QuoteRecord {
   province: string;
   finalPrice: number;
   priceVersion: string;
-  status: "pending" | "approved" | "rejected";
+  status: "pending" | "approved" | "rejected" | "expired";
   sellerNote: string | null;
   createdAt: string;
   reviewedAt: string | null;
-  priceSnapshot?: any;
+  priceSnapshot?: Record<string, unknown>;
 }
 
 const STATUS_CONFIG: Record<
   string,
-  { label: string; color: string; icon: any }
+  { label: string; color: string; icon: React.ReactNode }
 > = {
+  expired: { label: "Hết hạn", color: "bg-slate-100 text-slate-600", icon: <Clock size={13} /> },
   pending:  { label: "Chờ duyệt", color: "bg-yellow-100 text-yellow-700", icon: <Clock size={13} /> },
   approved: { label: "Đã duyệt",  color: "bg-green-100 text-green-700",   icon: <CheckCircle size={13} /> },
   rejected: { label: "Từ chối",   color: "bg-red-100 text-red-600",       icon: <XCircle size={13} /> },
 };
 
 export default function QuotesPage() {
-  const [quotes, setQuotes] = useState<QuoteRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<QuoteRecord | null>(null);
-  const [note, setNote] = useState("");
-  const [filterStatus, setFilter] = useState("all");
+  const query = useStaffData<{ quotes: QuoteResponse[] }>('seller-quotes', '/api/quotes');
+  const quotes: QuoteRecord[] = (query.data?.quotes ?? []).map((q) => ({
+    id: q.id, leadName: q.buyer_name ?? 'Khách hàng', phone: q.buyer_phone ?? '', model: q.model,
+    version: q.version, color: q.color, province: q.province, finalPrice: Number(q.final_price),
+    priceVersion: q.price_version, status: q.status as QuoteRecord['status'], sellerNote: q.seller_note,
+    createdAt: new Date(q.created_at + (q.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString('vi-VN'),
+    reviewedAt: q.reviewed_at ? new Date(q.reviewed_at + (q.reviewed_at.endsWith('Z') ? '' : 'Z')).toLocaleString('vi-VN') : null,
+    priceSnapshot: q.price_snapshot,
+  }));
+  const loading = query.isPending;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = quotes.find((q) => q.id === selectedId) ?? null;
+  const setSelected = (quote: QuoteRecord | null) => setSelectedId(quote?.id ?? null);
+  const [note, setNote] = useState('');
+  const [filterStatus, setFilter] = useState('all');
   const [submitting, setSubmitting] = useState(false);
-
-  const fetchQuotes = async () => {
-    setLoading(true);
+  const [actionError, setActionError] = useState('');
+  const handleReview = async (id: string, action: 'approve' | 'reject') => {
+    if (submitting) return;
+    setSubmitting(true); setActionError('');
     try {
-      const res = await fetch("/api/quotes");
-      if (res.ok) {
-        const data = await res.json();
-        const mapped: QuoteRecord[] = (data.quotes || []).map((q: any) => ({
-          id: q.id,
-          leadName: q.buyer_name || "Khách hàng",
-          phone: q.buyer_phone || "Chưa có SĐT",
-          model: q.model || "VF",
-          version: q.version || "Plus",
-          color: q.color || "Trắng",
-          province: q.province || "Hà Nội",
-          finalPrice: Number(q.final_price) || 0,
-          priceVersion: q.price_version || "2025-Q4-v1",
-          status: (q.status in STATUS_CONFIG ? q.status : "pending") as QuoteRecord["status"],
-          sellerNote: q.seller_note || null,
-          createdAt: q.created_at ? new Date(q.created_at).toLocaleDateString("vi-VN") : "Hôm nay",
-          reviewedAt: q.reviewed_at ? new Date(q.reviewed_at).toLocaleDateString("vi-VN") : null,
-          priceSnapshot: q.price_snapshot,
-        }));
-        setQuotes(mapped);
-      }
-    } catch (err) {
-      console.error("Failed to fetch quotes:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchQuotes();
-  }, []);
-
-  const handleReview = async (id: string, action: "approve" | "reject") => {
-    setSubmitting(true);
-    try {
-      const res = await fetch(`/api/quote/approve?quote_id=${encodeURIComponent(id)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, seller_note: note }),
+      await apiRequest('/api/quote/approve?quote_id=' + encodeURIComponent(id), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, seller_note: note }),
       });
-      if (res.ok) {
-        const nextStatus = action === "approve" ? "approved" : "rejected";
-        setQuotes((prev) =>
-          prev.map((q) =>
-            q.id === id
-              ? {
-                  ...q,
-                  status: nextStatus,
-                  reviewedAt: new Date().toLocaleDateString("vi-VN"),
-                  sellerNote: note || null,
-                }
-              : q
-          )
-        );
-        if (selected?.id === id) {
-          setSelected((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  status: nextStatus,
-                  reviewedAt: new Date().toLocaleDateString("vi-VN"),
-                  sellerNote: note || null,
-                }
-              : null
-          );
-        }
-      } else {
-        alert("Thao tác duyệt báo giá thất bại.");
-      }
-    } catch (err) {
-      console.error("Failed to approve/reject quote:", err);
-    } finally {
-      setSubmitting(false);
-    }
+      await refreshStaffData();
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Không xử lý được báo giá.'); }
+    finally { setSubmitting(false); }
   };
 
   const pending = quotes.filter((q) => q.status === "pending").length;
@@ -123,6 +70,7 @@ export default function QuotesPage() {
 
   return (
     <div className="flex h-full">
+      {(query.error || actionError) && <p role="alert" className="absolute z-20 rounded-xl bg-red-50 p-3 text-sm text-red-700">{actionError || query.error?.message}</p>}
       {/* ── LEFT: List ── */}
       <div className="flex-1 p-6 space-y-5 overflow-y-auto">
         <div className="flex items-center justify-between">
@@ -131,7 +79,7 @@ export default function QuotesPage() {
             <p className="text-slate-500 text-sm mt-1">Duyệt và quản lý báo giá từ khách hàng</p>
           </div>
           <button
-            onClick={fetchQuotes}
+            onClick={() => query.refetch()}
             disabled={loading}
             className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
           >
@@ -299,7 +247,7 @@ export default function QuotesPage() {
                 }`}
               >
                 <p className="font-semibold mb-1">
-                  {selected.status === "approved" ? "Đã duyệt" : "Đã từ chối"}
+                  {STATUS_CONFIG[selected.status].label}
                 </p>
                 <p>Ngày xử lý: {selected.reviewedAt || "Đã lưu"}</p>
                 {selected.sellerNote && <p className="mt-1">Ghi chú: {selected.sellerNote}</p>}

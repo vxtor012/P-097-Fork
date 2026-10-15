@@ -1,11 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useEffectEvent } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RotateCcw, Play, Pause, Box, AlertCircle } from "lucide-react";
+
+function disposeObject(root: THREE.Object3D) {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
+  root.traverse((object) => {
+    const mesh = object as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    geometries.add(mesh.geometry);
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      if (!material) continue;
+      materials.add(material);
+      for (const value of Object.values(material)) {
+        if (value instanceof THREE.Texture) textures.add(value);
+      }
+    }
+  });
+  textures.forEach((texture) => texture.dispose());
+  materials.forEach((material) => material.dispose());
+  geometries.forEach((geometry) => geometry.dispose());
+}
 
 interface CarViewer3DProps {
   /** Đường dẫn file model .glb (được nén DRACO) */
@@ -23,6 +44,13 @@ interface CarViewer3DProps {
 
 export function CarViewer3D({
   modelUrl,
+  ...props
+}: CarViewer3DProps) {
+  return <CarViewerContent key={modelUrl ?? "no-model"} modelUrl={modelUrl} {...props} />;
+}
+
+function CarViewerContent({
+  modelUrl,
   modelName,
   colorHex,
   roofHex,
@@ -30,7 +58,7 @@ export function CarViewer3D({
   className = "",
 }: CarViewer3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(modelUrl?.trim()));
   const [loadProgress, setLoadProgress] = useState(0);
   const [hasError, setHasError] = useState(false);
   const [autoRotate, setAutoRotate] = useState(false);
@@ -48,6 +76,7 @@ export function CarViewer3D({
   const defaultTarget = useRef(new THREE.Vector3(0, 0.45, 0));
 
   const hasModel = Boolean(modelUrl && modelUrl.trim() !== "");
+  const currentColors = useEffectEvent(() => ({ colorHex, roofHex }));
 
   // Hàm tô màu 2 tông (Upper Body / Roof / Hood vs Lower Body) cho VF8 bằng Vertex Colors
   const applyVF8Colors = useCallback(
@@ -167,16 +196,12 @@ export function CarViewer3D({
   // Khởi tạo Three.js
   useEffect(() => {
     if (!hasModel) {
-      setLoading(false);
       return;
     }
 
     const container = containerRef.current;
     if (!container) return;
 
-    setLoading(true);
-    setLoadProgress(0);
-    setHasError(false);
     carPaintMaterialsRef.current = [];
     carRoofMaterialsRef.current = [];
     vf8MeshesRef.current = [];
@@ -193,11 +218,13 @@ export function CarViewer3D({
     cameraRef.current = camera;
 
     // 3. Renderer: Nền hoàn toàn trong suốt (alpha: true) hiển thị liền mạch trên nền trắng
-    const renderer = new THREE.WebGLRenderer({
-      antialias: true,
-      alpha: true,
-      powerPreference: "high-performance",
-    });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+    } catch {
+      queueMicrotask(() => { setHasError(true); setLoading(false); });
+      return;
+    }
     renderer.setClearColor(0x000000, 0); // Trong suốt tuyệt đối
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(width, height);
@@ -213,7 +240,7 @@ export function CarViewer3D({
     controlsRef.current = controls;
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.autoRotate = autoRotate;
+    controls.autoRotate = false;
     controls.autoRotateSpeed = -1.8; // Dấu âm giúp quay THUẬN chiều kim đồng hồ
     controls.maxPolarAngle = Math.PI / 2 - 0.05;
     controls.minPolarAngle = Math.PI / 2.8; // ~64 độ
@@ -329,7 +356,8 @@ export function CarViewer3D({
     gltfLoader.load(
       modelUrl!,
       (gltf) => {
-        if (isDisposed) return;
+        if (isDisposed) { disposeObject(gltf.scene); return; }
+        const { colorHex, roofHex } = currentColors();
         modelScene = gltf.scene;
 
         const isVF3 = modelName.includes("VF 3") || modelName.includes("VF3");
@@ -484,11 +512,12 @@ export function CarViewer3D({
         setLoading(false);
       },
       (xhr) => {
-        if (xhr.total > 0) {
+        if (!isDisposed && xhr.total > 0) {
           setLoadProgress(Math.round((xhr.loaded / xhr.total) * 100));
         }
       },
       (err) => {
+        if (isDisposed) return;
         console.error("Lỗi khi tải 3D model:", err);
         setHasError(true);
         setLoading(false);
@@ -528,28 +557,19 @@ export function CarViewer3D({
       controls.dispose();
       dracoLoader.dispose();
 
-      if (modelScene) {
-        scene.remove(modelScene);
-      }
-
-      scene.traverse((obj) => {
-        if ((obj as THREE.Mesh).isMesh) {
-          const mesh = obj as THREE.Mesh;
-          mesh.geometry?.dispose();
-          if (Array.isArray(mesh.material)) {
-            mesh.material.forEach((m) => m.dispose());
-          } else {
-            mesh.material?.dispose();
-          }
-        }
-      });
+      disposeObject(scene);
+      controlsRef.current = null;
+      sceneRef.current = null;
+      carPaintMaterialsRef.current = [];
+      carRoofMaterialsRef.current = [];
+      vf8MeshesRef.current = [];
 
       renderer.dispose();
       if (renderer.domElement.parentElement) {
         renderer.domElement.remove();
       }
     };
-  }, [modelUrl, hasModel]);
+  }, [modelUrl, hasModel, modelName, applyVF8Colors]);
 
   // TRƯỜNG HỢP: Mẫu xe không có model 3D hoặc load bị lỗi -> hiển thị liền mạch trên nền trắng
   if (!hasModel || hasError) {

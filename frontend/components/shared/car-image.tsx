@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import type { VehicleKey } from "@/lib/vehicle-data";
 
 /** Quy ước: frontend/public/cars/<model viết thường>/<id màu>.png  vd: public/cars/vf6/white.png */
@@ -17,15 +17,15 @@ interface Props {
 }
 
 export function CarImage({ model, colorId, alt, className = "", maxWidth, imageUrl }: Props) {
+  const source = imageUrl || carImagePath(model, colorId);
+  return <CarImageContent key={`${model}:${source}`} model={model} colorId={colorId} alt={alt} className={className} maxWidth={maxWidth} imageUrl={imageUrl} />;
+}
+
+function CarImageContent({ model, colorId, alt, className = "", maxWidth, imageUrl }: Props) {
   const defaultWhite = `/cars/${model.toLowerCase()}/white.png`;
   const initialSrc = imageUrl || carImagePath(model, colorId);
   const [currentSrc, setCurrentSrc] = useState(initialSrc);
   const [hasError, setHasError] = useState(false);
-
-  useEffect(() => {
-    setCurrentSrc(imageUrl || carImagePath(model, colorId));
-    setHasError(false);
-  }, [imageUrl, model, colorId]);
 
   const box: React.CSSProperties = { width: "100%", maxWidth, aspectRatio: "16 / 9" };
 

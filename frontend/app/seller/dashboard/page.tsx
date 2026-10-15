@@ -1,6 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import type { LeadResponse, QuoteResponse } from "@/lib/api-types";
+
+import { useQuery } from "@tanstack/react-query";
+import { getQueryClient } from "@/lib/query-client";
+import { readApiError } from "@/lib/catalog-api";
+import { useAuthStore } from '@/lib/auth-store';
 import { formatVND } from "@/lib/format";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -9,110 +14,49 @@ import {
 import {
   Users, TrendingUp,
   Clock, CheckCircle,
-  FilePlus, RefreshCw, Car
+  FilePlus, RefreshCw
 } from "lucide-react";
 
 export default function DashboardPage() {
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalLeads: 0,
-    pendingQuotes: 0,
-    approvedQuotes: 0,
-    conversionRate: 0,
-    totalRevenue: 0,
-    revenueThisMonth: 0,
-  });
-  const [modelCounts, setModelCounts] = useState<{ model: string; count: number; color: string }[]>([]);
-  const [recentQuotes, setRecentQuotes] = useState<any[]>([]);
-
-  const fetchDashboardData = async () => {
-    setLoading(true);
-    try {
+  const user = useAuthStore((s) => s.user);
+  const dashboard = useQuery({
+    queryKey: ['seller-dashboard', user?.id], enabled: !!user,
+    queryFn: async ({ signal }) => {
       const [leadsRes, quotesRes] = await Promise.all([
-        fetch("/api/leads").catch(() => null),
-        fetch("/api/quotes").catch(() => null),
+        fetch('/api/leads', { signal, cache: 'no-store' }),
+        fetch('/api/quotes', { signal, cache: 'no-store' }),
       ]);
-
-      const leadsData = leadsRes && leadsRes.ok ? await leadsRes.json() : { leads: [] };
-      const quotesData = quotesRes && quotesRes.ok ? await quotesRes.json() : { quotes: [] };
-
-      const leads = leadsData.leads || [];
-      const quotes = quotesData.quotes || [];
-
-      const totalLeads = leads.length;
-      const pendingQuotes = quotes.filter((q: any) => q.status === "pending").length;
-      const approvedQuotes = quotes.filter((q: any) => q.status === "approved").length;
-      const conversionRate = quotes.length ? Math.round((approvedQuotes / quotes.length) * 100) : 0;
-      const totalRevenue = quotes
-        .filter((q: any) => q.status === "approved")
-        .reduce((sum: number, q: any) => sum + (Number(q.final_price) || 0), 0);
-      const revenueThisMonth = totalRevenue;
-
-      setStats({
-        totalLeads,
-        pendingQuotes,
-        approvedQuotes,
-        conversionRate,
-        totalRevenue,
-        revenueThisMonth,
-      });
-
-      // Model counts from quotes and leads
-      const counts: Record<string, number> = {};
-      quotes.forEach((q: any) => {
-        const m = (q.model || "Khác").toUpperCase();
-        counts[m] = (counts[m] || 0) + 1;
-      });
-
-      const colors: Record<string, string> = {
-        VF3: "#F59E0B",
-        VF5: "#10B981",
-        VF6: "#3B82F6",
-        VF7: "#8B5CF6",
-        VF8: "#EC4899",
-        VF9: "#6366F1",
-      };
-
-      const sortedModels = Object.entries(counts)
-        .map(([model, count]) => ({
-          model,
-          count,
-          color: colors[model] || "#3B82F6",
-        }))
-        .sort((a, b) => b.count - a.count);
-
-      setModelCounts(
-        sortedModels.length > 0
-          ? sortedModels
-          : [
-              { model: "VF3", count: 4, color: "#F59E0B" },
-              { model: "VF6", count: 8, color: "#3B82F6" },
-              { model: "VF7", count: 6, color: "#8B5CF6" },
-              { model: "VF8", count: 5, color: "#EC4899" },
-            ]
-      );
-
-      setRecentQuotes(quotes.slice(0, 5));
-    } catch (err) {
-      console.error("Dashboard data fetch failed:", err);
-    } finally {
-      setLoading(false);
-    }
+      if (!leadsRes.ok) throw new Error(await readApiError(leadsRes, 'Không tải được leads.'));
+      if (!quotesRes.ok) throw new Error(await readApiError(quotesRes, 'Không tải được báo giá.'));
+      return { leads: (await leadsRes.json()).leads as LeadResponse[],
+        quotes: (await quotesRes.json()).quotes as QuoteResponse[] };
+    }, refetchInterval: 10000, refetchIntervalInBackground: false, retry: false,
+  }, getQueryClient());
+  const loading = dashboard.isFetching;
+  const leads = dashboard.data?.leads ?? [];
+  const quotes = dashboard.data?.quotes ?? [];
+  const approved = quotes.filter((q) => q.status === 'approved');
+  const stats = {
+    totalLeads: leads.length, pendingQuotes: quotes.filter((q) => q.status === 'pending').length,
+    approvedQuotes: approved.length, conversionRate: quotes.length ? Math.round(approved.length / quotes.length * 100) : 0,
+    totalRevenue: approved.reduce((sum, q) => sum + Number(q.final_price), 0),
   };
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, []);
-
-  const weeklyData = [
-    { day: "T2", leads: Math.min(stats.totalLeads, 4), quotes: Math.min(stats.pendingQuotes, 2) },
-    { day: "T3", leads: Math.min(stats.totalLeads, 6), quotes: Math.min(stats.pendingQuotes, 3) },
-    { day: "T4", leads: Math.min(stats.totalLeads, 5), quotes: Math.min(stats.pendingQuotes, 4) },
-    { day: "T5", leads: Math.min(stats.totalLeads, 8), quotes: Math.min(stats.pendingQuotes, 5) },
-    { day: "T6", leads: Math.min(stats.totalLeads, 7), quotes: Math.min(stats.pendingQuotes, 3) },
-    { day: "T7", leads: Math.min(stats.totalLeads, 9), quotes: Math.min(stats.pendingQuotes, 6) },
-    { day: "CN", leads: Math.min(stats.totalLeads, 3), quotes: Math.min(stats.pendingQuotes, 2) },
-  ];
+  const counts: Record<string, number> = {};
+  quotes.forEach((q) => { counts[q.model] = (counts[q.model] ?? 0) + 1; });
+  const modelCounts = Object.entries(counts).map(([model, count]) => ({ model, count, color: '#3B82F6' })).sort((a, b) => b.count - a.count);
+  const recentQuotes = quotes.slice(0, 5);
+  // Group actual created_at timestamps into the current week in Vietnam.
+  const dayKey = (date: Date) => date.toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const today = new Date();
+  const weekdayName = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', weekday: 'short' }).format(today);
+  const weekday = ({ Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 } as Record<string, number>)[weekdayName];
+  const weeklyData = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((day, index) => {
+    const date = new Date(today.getTime() + (index + 1 - weekday) * 86400000);
+    const key = dayKey(date);
+    const recordDay = (value: string) => dayKey(new Date(value.endsWith('Z') || /[+-]\d\d:\d\d$/.test(value) ? value : value + 'Z'));
+    return { day, leads: leads.filter((l) => recordDay(l.created_at) === key).length,
+      quotes: quotes.filter((q) => recordDay(q.created_at) === key).length };
+  });
 
   return (
     <div className="p-6 space-y-6">
@@ -120,10 +64,10 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Tổng quan (Dashboard)</h1>
-          <p className="text-slate-500 text-sm mt-1">Dữ liệu thời gian thực từ hệ thống đại lý</p>
+          <p className="text-slate-500 text-sm mt-1">Số liệu từ leads và báo giá đã lưu</p>
         </div>
         <button
-          onClick={fetchDashboardData}
+          onClick={() => dashboard.refetch()}
           disabled={loading}
           className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
         >
@@ -132,6 +76,8 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {dashboard.isError && <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{dashboard.error.message} {dashboard.data ? 'Đang hiển thị lần tải thành công trước đó.' : 'Chưa có dữ liệu để thống kê.'}</p>}
+      {dashboard.isPending && <p role="status">Đang tải thống kê…</p>}
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -161,9 +107,9 @@ export default function DashboardPage() {
         <StatCard
           icon={<TrendingUp size={20} className="text-purple-600" />}
           bg="bg-purple-50"
-          label="Doanh thu đã duyệt"
+          label="Giá trị báo giá đã duyệt"
           value={formatVND(stats.totalRevenue)}
-          sub="Tổng giá trị đơn duyệt"
+          sub="Chưa phải doanh thu bán xe"
           subColor="text-slate-500"
           small
         />
@@ -220,7 +166,7 @@ export default function DashboardPage() {
           {recentQuotes.length === 0 ? (
             <p className="text-sm text-slate-400 py-3">Chưa có hoạt động báo giá nào</p>
           ) : (
-            recentQuotes.map((q: any) => (
+            recentQuotes.map((q: QuoteResponse) => (
               <div key={q.id} className="flex items-center justify-between py-2.5 border-b last:border-0 gap-3">
                 <div className="flex items-center gap-3">
                   <span className="flex items-center justify-center w-8 h-8 rounded-xl bg-blue-50 text-blue-600">

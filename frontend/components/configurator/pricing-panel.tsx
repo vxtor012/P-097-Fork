@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 
-import { VEHICLES } from "@/lib/vehicle-data";
 import { formatVND } from "@/lib/format";
 import { useConfigurator } from "@/hooks/use-configurator";
 import { Info, Car, Gift, FileDown, CheckCircle2, Loader2 } from "lucide-react";
@@ -13,8 +12,7 @@ interface Props {
 }
 
 export function PricingPanel({ configurator, onRequestQuote }: Props) {
-  const { config, pricing } = configurator;
-  const vehicle = VEHICLES[config.model];
+  const { config, pricing, vehicle, canQuote, statusMessage, pricingRequest } = configurator;
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   const handleExportPdf = async () => {
@@ -23,29 +21,7 @@ export function PricingPanel({ configurator, onRequestQuote }: Props) {
       const res = await fetch("/api/quote/preview-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.model,
-          version: pricing.version.label,
-          color: pricing.color.label,
-          battery: config.battery,
-          province: pricing.province.label,
-          final_price: pricing.finalPrice,
-          price_version: "2025-Q4-v1",
-          price_snapshot: {
-            base_price: pricing.basePrice,
-            battery_cost: pricing.batteryPrice,
-            accessories: pricing.accList.map((a) => ({ name: a.label, price: a.price })),
-            rolling_costs: {
-              registration_fee: pricing.registrationFee,
-              plate_fee: pricing.plateFee,
-              road_fee: pricing.roadFee,
-              inspection_fee: pricing.inspectionFee,
-              insurance: pricing.insuranceFee,
-            },
-            promotions: pricing.promos,
-            final_price: pricing.finalPrice,
-          },
-        }),
+        body: JSON.stringify(pricingRequest),
       });
 
       if (!res.ok) throw new Error("Không thể tạo PDF");
@@ -68,6 +44,7 @@ export function PricingPanel({ configurator, onRequestQuote }: Props) {
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-8">
+      <p role="status" className={`mb-3 text-xs ${canQuote ? "text-emerald-700" : "text-amber-700"}`}>{statusMessage}</p>
 
       {/* Xe preview */}
       <div className="bg-white rounded-2xl shadow-sm border overflow-hidden mb-6">
@@ -220,13 +197,14 @@ export function PricingPanel({ configurator, onRequestQuote }: Props) {
       <div className="flex gap-3 mt-4">
         <button
           onClick={handleExportPdf}
-          disabled={downloadingPdf}
+          disabled={downloadingPdf || !canQuote}
           className="flex-1 py-3 rounded-xl border border-blue-600 text-blue-600 font-medium text-sm hover:bg-blue-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
         >
           {downloadingPdf ? <Loader2 size={15} className="animate-spin" /> : <FileDown size={15} />}
           <span>{downloadingPdf ? "Đang tạo PDF..." : "Xuất PDF báo giá"}</span>
         </button>
-        <button onClick={onRequestQuote} className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors flex items-center justify-center gap-2">
+        <button onClick={onRequestQuote}
+          disabled={!canQuote} className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-colors flex items-center justify-center gap-2">
           <CheckCircle2 size={15} />
           <span>Yêu cầu báo giá chính thức</span>
         </button>

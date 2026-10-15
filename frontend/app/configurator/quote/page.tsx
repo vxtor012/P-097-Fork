@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft, FileDown, Loader2 } from "lucide-react";
@@ -11,10 +11,14 @@ import { BuyerIdentityModal } from "@/components/shared/buyer-identity-modal";
 import { useConfigurator } from "@/hooks/use-configurator";
 import { fromQuery, toQuery } from "@/lib/config-url";
 import { VEHICLES } from "@/lib/vehicle-data";
+import { readApiError } from "@/lib/catalog-api";
 import { formatVND } from "@/lib/format";
+import { InstallmentEstimator } from '@/components/configurator/installment-estimator';
 
 function Quote() {
-  const { config, pricing, vehicle } = useConfigurator(fromQuery(useSearchParams()));
+  const configurator = useConfigurator(fromQuery(useSearchParams()));
+  const { config, setField, pricing, vehicle, dealers, dealerError, canQuote, statusMessage, pricingRequest, refreshPricing } = configurator;
+  const requestRef = useRef<{ fingerprint: string; id: string } | null>(null);
   const [open, setOpen] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
@@ -24,29 +28,7 @@ function Quote() {
       const res = await fetch("/api/quote/preview-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: config.model,
-          version: pricing.version.label,
-          color: pricing.color.label,
-          battery: config.battery,
-          province: pricing.province.label,
-          final_price: pricing.finalPrice,
-          price_version: "2025-Q4-v1",
-          price_snapshot: {
-            base_price: pricing.basePrice,
-            battery_cost: pricing.batteryPrice,
-            accessories: pricing.accList.map((a) => ({ name: a.label, price: a.price })),
-            rolling_costs: {
-              registration_fee: pricing.registrationFee,
-              plate_fee: pricing.plateFee,
-              road_fee: pricing.roadFee,
-              inspection_fee: pricing.inspectionFee,
-              insurance: pricing.insuranceFee,
-            },
-            promotions: pricing.promos,
-            final_price: pricing.finalPrice,
-          },
-        }),
+        body: JSON.stringify(pricingRequest),
       });
 
       if (!res.ok) throw new Error("Không thể tạo PDF");
@@ -59,7 +41,7 @@ function Quote() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-    } catch (e) {
+    } catch {
       alert("Lỗi khi tải PDF báo giá.");
     } finally {
       setDownloadingPdf(false);
@@ -88,7 +70,7 @@ function Quote() {
           <CarImage
             model={config.model}
             colorId={config.colorId}
-            imageUrl={(pricing.color as any)?.imageUrl || (pricing.color as any)?.image_url}
+            imageUrl={pricing.color?.imageUrl || pricing.color?.image_url}
             alt={v.label}
             maxWidth={560}
             className="mx-auto"
@@ -101,6 +83,7 @@ function Quote() {
 
         <section>
           <h2 className="text-xl font-bold text-slate-900">Chi phí lăn bánh</h2>
+          <p role="status" className={`mt-2 text-xs ${canQuote ? "text-emerald-700" : "text-amber-700"}`}>{statusMessage}</p>
           <dl className="mt-4 divide-y divide-slate-100 text-sm">
             {rows.map(([k, n]) => (
               <div key={k} className="flex justify-between py-3"><dt className="text-slate-600">{k}</dt><dd className="font-medium text-slate-900">{formatVND(n)}</dd></div>
@@ -113,15 +96,23 @@ function Quote() {
             <span className="text-sm text-white/70">Tổng dự tính</span><span className="text-2xl font-bold">{formatVND(pricing.finalPrice)}</span>
           </div>
           <div className="mt-5 space-y-2.5">
+            <label className="block text-sm font-medium text-slate-700">Đại lý nhận yêu cầu
+              <select value={config.dealerId} onChange={(e) => setField('dealerId', e.target.value)} required className="mt-2 w-full rounded-xl border p-3">
+                <option value="">Chọn đại lý</option>
+                {dealers.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.province}</option>)}
+              </select>
+            </label>
+            {dealerError && <p role="alert" className="text-xs text-red-600">{dealerError}</p>}
             <button
               onClick={() => setOpen(true)}
-              className="w-full rounded-full bg-blue-600 py-3.5 font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm"
+              disabled={!canQuote || !config.dealerId}
+              className="w-full disabled:opacity-50 rounded-full bg-blue-600 py-3.5 font-semibold text-white hover:bg-blue-700 transition-colors shadow-sm"
             >
               Yêu cầu báo giá chính thức
             </button>
             <button
               onClick={downloadPreviewPdf}
-              disabled={downloadingPdf}
+              disabled={downloadingPdf || !canQuote}
               className="w-full flex items-center justify-center gap-2 rounded-full border border-blue-600 py-3 font-semibold text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-60"
             >
               {downloadingPdf ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
@@ -129,6 +120,7 @@ function Quote() {
             </button>
           </div>
           <p className="mt-3 text-xs text-slate-500">Giá chỉ mang tính tham khảo. Báo giá chính thức do tư vấn viên của đại lý xác nhận.</p>
+          <InstallmentEstimator configurator={configurator} />
         </section>
 
       </main>
@@ -138,54 +130,25 @@ function Quote() {
         onConfirm={async (info) => {
           const sessionId =
             typeof window !== "undefined"
-              ? sessionStorage.getItem("vf_session") || "web-" + Math.random().toString(36).slice(2, 9)
+              ? sessionStorage.getItem("vf_session") || crypto.randomUUID()
               : "web-session";
 
-          // 1. Lưu Lead khách hàng tiềm năng
-          await fetch("/api/leads", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              session_id: sessionId,
-              name: info.name,
-              phone: info.phone,
-              province: info.province || pricing.province.label,
-              interested_in: `${v.label} ${pricing.version.label}`,
-              budget: pricing.finalPrice,
-              note: info.note || `Cấu hình ${pricing.color.label}, Pin ${config.battery === "buy" ? "Mua pin" : "Thuê pin"}`,
-            }),
-          });
-
-          // 2. Lưu Báo giá chính thức
-          const res = await fetch("/api/quotes", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              session_id: sessionId,
-              buyer_name: info.name,
-              buyer_phone: info.phone,
-              model: config.model,
-              version: pricing.version.label,
-              color: pricing.color.label,
-              battery: config.battery,
-              province: pricing.province.label,
-              accessories: config.accessories,
-              price_snapshot: {
-                base_price: pricing.basePrice,
-                battery_cost: pricing.batteryPrice,
-                acc_total: pricing.accTotal,
-                rolling_total: pricing.rollingTotal,
-                discount: pricing.discount,
-                final_price: pricing.finalPrice,
-              },
-              price_version: "2025-Q4-v1",
-              final_price: pricing.finalPrice,
-            }),
+          if (!canQuote || !config.dealerId) throw new Error('Hãy chọn đại lý và chờ xác nhận giá hiện hành.');
+          sessionStorage.setItem('vf_session', sessionId);
+          // Backend creates the lead and quote in one transaction.
+          const payload = { ...pricingRequest, session_id: sessionId,
+            buyer_name: info.name, buyer_phone: info.phone, note: info.note,
+            price_version: pricing.priceVersion, final_price: pricing.finalPrice };
+          const fingerprint = JSON.stringify(payload);
+          if (requestRef.current?.fingerprint !== fingerprint) requestRef.current = { fingerprint, id: crypto.randomUUID() };
+          const res = await fetch('/api/quotes', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, request_id: requestRef.current.id }),
           });
 
           if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || "Không thể tạo báo giá.");
+            if (res.status === 409) await refreshPricing();
+            throw new Error(await readApiError(res, "Không thể tạo báo giá."));
           }
         }}
         finalPrice={pricing.finalPrice}

@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { hasValidRequestOrigin } from "@/lib/request-origin";
+
 const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8000";
 export const maxDuration = 65;
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
+  if (!hasValidRequestOrigin(req)) {
+    return NextResponse.json({ error: "Nguồn yêu cầu không hợp lệ." }, { status: 403 });
+  }
+  let body: unknown;
+  try { body = await req.json(); } catch {
+    return NextResponse.json({ error: "Nội dung yêu cầu không hợp lệ." }, { status: 400 });
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);

@@ -1,4 +1,5 @@
 import pytest
+
 from src.services.auth import (
     create_access_token,
     decode_access_token,
@@ -48,14 +49,15 @@ def test_pdf_generation_content():
 
 
 @pytest.mark.asyncio
-async def test_api_quote_preview_pdf(client):
+async def test_api_quote_preview_pdf(client, operational_db):
     res = await client.post(
         "/api/v1/quote/preview-pdf",
         json={
             "model": "VF6",
-            "version": "Tiêu chuẩn",
-            "color": "Đỏ Năng Lượng",
-            "province": "Đà Nẵng",
+            "version": "Plus",
+            "color": "Trắng",
+            "province": "Hà Nội",
+            "battery": "rent",
             "buyer_name": "Khách Test",
             "final_price": 599000000,
             "price_snapshot": {"base_price": 599000000},

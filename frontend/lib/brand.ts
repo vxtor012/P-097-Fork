@@ -3,11 +3,11 @@
 export const BRAND = {
   name: "VINFAST",
   siteTitle: "VinFast - Tư vấn, báo giá và mua xe điện",
-  dealerName: "Đại lý ABC - Hà Nội",
+  dealerName: "đại lý bạn chọn",
   hotline: "024 0000 0000",
   featured: "VF8" as const, // dòng xe nổi bật ở banner đầu trang
   heroTitle: "Xe điện VinFast, biết ngay giá lăn bánh.",
   heroText: "Chọn xe, xem ưu đãi của đại lý, tính trả góp và nhận báo giá ngay. Hoặc hỏi trợ lý như đang nói chuyện với nhân viên showroom.",
-  promoTitle: "Ưu đãi tháng 10: giảm 30 triệu đồng",
-  promoText: "Áp dụng toàn quốc. Mỗi đại lý có thể có thêm ưu đãi riêng, hỏi trợ lý để biết chi tiết.",
+  promoTitle: "Tra cứu ưu đãi hiện hành cho xe của bạn",
+  promoText: "Ưu đãi được kiểm tra theo dòng xe, địa phương và thời gian. Các điều kiện riêng cần đại lý xác nhận.",
 };

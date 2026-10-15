@@ -16,6 +16,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Unicode Vietnamese fonts used by ReportLab on Linux.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core && \
+    rm -rf /var/lib/apt/lists/*
+
 # Security: Create and run as non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m appuser
 

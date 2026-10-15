@@ -1,0 +1,36 @@
+.header { position: sticky; top: 0; z-index: 40; background: rgb(246 245 240 / 95%); border-bottom: 1px solid #172a2714; color: #172a27; backdrop-filter: blur(16px); }
+.inner { display: flex; align-items: center; justify-content: space-between; width: 100%; height: 76px; padding: 0 clamp(20px, 4vw, 72px); gap: 24px; }
+.brand { display: flex; align-items: center; gap: 11px; color: #134c40; flex-shrink: 0; }
+.brand span { font-size: 17px; font-weight: 760; letter-spacing: .2em; }
+.desktopNav { display: flex; align-items: center; gap: clamp(24px, 3vw, 48px); }
+.desktopNav a { font-size: 13px; font-weight: 550; color: #56645f; transition: color .2s; }
+.desktopNav a:hover { color: #134c40; }
+.actions { display: flex; align-items: center; gap: 12px; }
+.auth > a, .auth > div > a { display: inline-flex; align-items: center; justify-content: center; min-height: 39px; border: 1px solid #134c4030; border-radius: 7px; background: transparent; color: #134c40; padding: 8px 19px; font-size: 12px; font-weight: 650; }
+.auth > a:hover, .auth > div > a:hover { background: #e4ede6; color: #134c40; }
+.auth > div { gap: 10px; }
+.auth button { font-size: 12px; }
+.menuButton { display: none; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid #134c4030; border-radius: 7px; color: #134c40; }
+.mobileNav { position: absolute; top: 100%; left: 0; width: 100%; background: #f6f5f0; padding: 8px 22px 20px; border-bottom: 1px solid #d9dfd8; box-shadow: 0 18px 24px #172a270c; }
+.mobileNav a { display: flex; justify-content: space-between; padding: 17px 0; border-bottom: 1px solid #172a2714; font-size: 15px; }
+.dark { background: rgb(19 76 64 / 96%); color: white; border-color: #ffffff20; }
+.dark .brand, .dark .desktopNav a { color: #edf2ec; }
+.dark .auth > a, .dark .auth > div > a, .dark .menuButton { color: white; border-color: #ffffff50; }
+.dark .auth > a:hover, .dark .auth > div > a:hover { background: #ffffff15; }
+.dark .mobileNav { background: #134c40; color: white; }
+.dark .mobileNav a { border-color: #ffffff20; }
+@media (max-width: 780px) {
+  .inner { height: 68px; gap: 12px; padding: 0 20px; }
+  .brand { gap: 8px; }
+  .brand span { font-size: 14px; letter-spacing: .17em; }
+  .brand svg { width: 26px; }
+  .desktopNav { display: none; }
+  .menuButton { display: flex; }
+  .auth > a, .auth > div > a { padding: 7px 12px; min-height: 38px; font-size: 12px; }
+}
+@media (max-width: 450px) {
+  .actions { gap: 7px; }
+  .auth > div { flex-wrap: wrap; justify-content: flex-end; max-width: 150px; gap: 2px 7px; }
+  .auth > div > a { font-size: 12px; padding: 5px 9px; min-height: 30px; }
+  .auth button { font-size: 12px; }
+}
