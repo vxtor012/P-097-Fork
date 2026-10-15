@@ -126,6 +126,10 @@ phiên, báo giá hoặc hội thoại. Đổi `JWT_SECRET` sẽ buộc các phi
 
 ## Xử lý lỗi
 
+Nếu log báo `Production requires JWT_SECRET with at least 32 characters`, vào Render → service backend → **Environment**, thêm/sửa `JWT_SECRET` bằng secret ngẫu nhiên rồi chọn **Save, rebuild, and deploy**. Có thể sinh secret với `python -c "import secrets; print(secrets.token_urlsafe(48))"`; không commit giá trị này.
+
+`render.yaml` dùng `generateValue: true` để [Render tự sinh secret](https://render.com/docs/blueprint-spec#generating-random-secrets) nếu biến chưa tồn tại. Giá trị đã tồn tại nhưng rỗng hoặc quá ngắn cần được thay thủ công trong Environment. Sau redeploy, kiểm tra `/health` trả 200.
+
 | Triệu chứng | Kiểm tra và cách xử lý |
 | --- | --- |
 | Build backend lỗi | Dockerfile ở root, dependencies cài đủ; không thêm COPY dataset/data |
