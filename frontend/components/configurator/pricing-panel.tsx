@@ -1,5 +1,6 @@
 "use client";
 
+import { BRAND } from "@/lib/brand";
 import { useState } from "react";
 
 import { formatVND } from "@/lib/format";
@@ -29,7 +30,7 @@ export function PricingPanel({ configurator, onRequestQuote }: Props) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `VinFast_BaoGia_${config.model}_${pricing.version.label}.pdf`.replace(/\s+/g, "_");
+      a.download = `${BRAND.name}_BaoGia_${config.model}_${pricing.version.label}.pdf`.replace(/\s+/g, "_");
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

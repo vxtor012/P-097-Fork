@@ -1,5 +1,6 @@
 "use client";
 
+import { BRAND } from "@/lib/brand";
 import { useState } from "react";
 import Link from "next/link";
 import { PriceQuoteData, InstallmentData } from "@/types/chat";
@@ -52,7 +53,7 @@ function PriceQuoteSidebar({ data }: { data: PriceQuoteData }) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `VinFast_BaoGia_${data.model}_${data.version}.pdf`.replace(/\s+/g, "_");
+      a.download = `${BRAND.name}_BaoGia_${data.model}_${data.version}.pdf`.replace(/\s+/g, "_");
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);

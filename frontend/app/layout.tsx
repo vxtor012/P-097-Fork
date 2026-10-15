@@ -1,3 +1,4 @@
+import { BRAND } from "@/lib/brand";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
@@ -10,7 +11,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "VinFast AI - Tư vấn xe thông minh",
+  title: BRAND.siteTitle,
   description: "Tìm xe phù hợp, so sánh giá, tính trả góp với AI",
 };
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { BRAND } from "@/lib/brand";
 import { useRef, useEffect, useState } from "react";
 import { Send, Bot, Car } from "lucide-react";
 import { useChat } from "@/hooks/use-chat";
@@ -62,7 +63,7 @@ export function ChatPanel({ chat, configurator }: Props) {
             <Bot size={18} className="text-white" />
           </div>
           <div>
-            <p className="font-semibold text-gray-900 text-sm">VinFast AI</p>
+            <p className="font-semibold text-gray-900 text-sm">Trợ lý {BRAND.name}</p>
             <p className="text-xs text-gray-500">Tư vấn viên thông minh</p>
           </div>
           <span className="ml-auto flex items-center gap-1 text-xs text-green-600">

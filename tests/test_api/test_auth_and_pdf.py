@@ -65,6 +65,7 @@ async def test_api_quote_preview_pdf(client, operational_db):
     )
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/pdf"
+    assert res.headers["content-disposition"] == 'attachment; filename="P97_BaoGia_VF6_Plus.pdf"'
     assert res.content.startswith(b"%PDF-")
 
 

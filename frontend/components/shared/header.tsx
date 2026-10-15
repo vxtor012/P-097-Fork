@@ -1,5 +1,6 @@
 "use client";
 
+import { BRAND } from "@/lib/brand";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuthStore, ROLE_HOME } from "@/lib/auth-store";
@@ -40,7 +41,7 @@ export function Header() {
         <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center">
           <Car size={14} className="text-white" />
         </div>
-        VinFast AI
+        {BRAND.name}
       </Link>
 
       <div className="flex-1" />

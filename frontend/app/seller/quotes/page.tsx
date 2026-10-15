@@ -1,5 +1,6 @@
 "use client";
 
+import { BRAND } from "@/lib/brand";
 import type { QuoteResponse } from "@/lib/api-types";
 
 import { useState } from "react";
@@ -218,7 +219,7 @@ export default function QuotesPage() {
               href={`/api/quotes/${selected.id}/pdf`}
               target="_blank"
               rel="noopener noreferrer"
-              download={`VinFast_BaoGia_${selected.id.slice(0, 8).toUpperCase()}.pdf`}
+              download={`${BRAND.name}_BaoGia_${selected.id.slice(0, 8).toUpperCase()}.pdf`}
               className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-blue-600 bg-blue-50/50 hover:bg-blue-100/60 text-blue-700 font-medium text-xs transition-colors shadow-sm"
             >
               <FileDown size={15} />

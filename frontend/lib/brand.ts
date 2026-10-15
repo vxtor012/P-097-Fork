@@ -1,8 +1,8 @@
 // Toàn bộ tên và nội dung của "nhà bán xe". Đại lý/hãng khác chỉ cần sửa file này
 // (và bảng xe trong lib/vehicle-data.ts, cửa hàng trong lib/org-data.ts, ảnh trong public/cars).
 export const BRAND = {
-  name: "VINFAST",
-  siteTitle: "VinFast - Tư vấn, báo giá và mua xe điện",
+  name: "P97",
+  siteTitle: "P97 - Tư vấn, báo giá và mua xe điện",
   dealerName: "đại lý bạn chọn",
   hotline: "024 0000 0000",
   featured: "VF8" as const, // dòng xe nổi bật ở banner đầu trang

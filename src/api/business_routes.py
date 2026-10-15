@@ -290,7 +290,7 @@ def pdf_response(quote):
         generate_quote_pdf(payload),
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="VinFast_BaoGia_{str(quote.id)[:8]}.pdf"',
+            "Content-Disposition": f'attachment; filename="P97_BaoGia_{str(quote.id)[:8]}.pdf"',
             "Cache-Control": "private, no-store",
         },
     )

@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 
 settings = get_settings()
 app = FastAPI(
-    title="VinFast AI Agent",
+    title="P97 AI Agent",
     description="AI Agent + Car Configurator API",
     version="1.0.0",
     lifespan=lifespan,

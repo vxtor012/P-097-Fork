@@ -408,7 +408,7 @@ async def preview_pdf(body: QuotePreview, db: AsyncSession = Depends(get_db, sco
 
     model = _clean(raw_model) or "VF"
     version = _clean(raw_ver) or "Standard"
-    filename = f"VinFast_BaoGia_{model}_{version}.pdf"
+    filename = f"P97_BaoGia_{model}_{version}.pdf"
 
     return Response(
         content=pdf_bytes,
