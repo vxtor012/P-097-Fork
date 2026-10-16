@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthBootstrap } from "@/components/providers/auth-bootstrap";
+import { FloatingChat } from "@/components/chat/floating-chat";
 
 const inter = Inter({
   subsets: ["latin", "vietnamese"],
@@ -21,9 +22,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="vi" className={inter.variable}>
-      <body className={`${inter.className} font-sans antialiased`}><AuthBootstrap />{children}</body>
+    <html lang="vi" className={inter.variable} suppressHydrationWarning>
+      <body className={`${inter.className} font-sans antialiased`} suppressHydrationWarning>
+        <AuthBootstrap />
+        {children}
+        <FloatingChat />
+      </body>
     </html>
   );
 }
-

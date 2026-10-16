@@ -23,11 +23,16 @@ export function DashboardShell({ title, nav, children }: { title: string; nav: N
     if (await logout()) { router.replace('/'); router.refresh(); }
     else setLogoutError('Đăng xuất chưa thành công. Vui lòng thử lại.');
   };
-  const item = (active: boolean) => cn("flex items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium transition", active ? "bg-blue-600 text-white" : "text-white/70 hover:bg-white/10 hover:text-white");
-
+  const item = (active: boolean) =>
+    cn(
+      "flex items-center gap-3 rounded-full px-4 py-2.5 text-sm font-medium transition",
+      active
+        ? "bg-white/15 text-white"
+        : "text-white/70 hover:bg-white/10 hover:text-white"
+    );
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-50 md:flex-row">
-      <aside className="hidden w-64 flex-shrink-0 flex-col bg-[#0b1220] text-white md:flex">
+      <aside className="hidden w-64 flex-shrink-0 flex-col bg-[#134c40] text-white md:flex">
         <div className="px-6 py-6">
           <p className="text-lg font-bold tracking-[.3em]">{BRAND.name}</p>
           <p className="mt-1 text-xs text-white/50">{title}{user?.dealer ? ` · ${user.dealer}` : ""}</p>

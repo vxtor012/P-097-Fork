@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getQueryClient } from "@/lib/query-client";
+import { clearQueryClient } from "@/lib/query-client";
 
 export type UserRole = "buyer" | "seller" | "warehouse" | "warehouse_manager" | "admin";
 export interface AuthUser {
@@ -29,7 +29,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
       if (res.ok) set({ user: data.user, initialized: true });
       else if (res.status === 401 || res.status === 403) {
         set({ user: null, initialized: true });
-        getQueryClient().clear();
+        void clearQueryClient();
       } else set({ initialized: true });
     } catch { if (revision === sessionRevision) set({ initialized: true }); }
   },
@@ -41,7 +41,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
       const data = await res.json().catch(() => ({}));
       if (revision !== sessionRevision) return { ok: false, error: "Phiên đăng nhập đã thay đổi." };
       if (!res.ok) return { ok: false, error: typeof data.detail === "string" ? data.detail : "Không thể đăng nhập. Vui lòng kiểm tra thông tin." };
-      getQueryClient().clear();
+      void clearQueryClient();
       set({ user: data.user, initialized: true });
       return { ok: true };
     } catch { return { ok: false, error: "Không thể kết nối máy chủ đăng nhập." }; }
@@ -52,7 +52,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
       const res = await fetch("/api/auth/logout", { method: "POST" });
       if (!res.ok && res.status !== 401) return false;
       set({ user: null, initialized: true });
-      getQueryClient().clear();
+      void clearQueryClient();
       return true;
     } catch { return false; }
   },
