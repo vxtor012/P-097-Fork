@@ -2,13 +2,20 @@
 
 import json
 
+import pytest
+
 from scripts import run_app
 
 
-def test_existing_env_is_default_even_when_local_profile_exists(tmp_path, monkeypatch):
+@pytest.mark.parametrize("process_secret", [None, "inherited-process-secret"])
+def test_existing_env_is_default_even_when_local_profile_exists(tmp_path, monkeypatch, process_secret):
     monkeypatch.setattr(run_app, "ROOT", tmp_path)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("BACKEND_URL", raising=False)
+    if process_secret is None:
+        monkeypatch.delenv("JWT_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("JWT_SECRET", process_secret)
     (tmp_path / "frontend").mkdir()
     (tmp_path / "frontend/.env.local").write_text("BACKEND_URL=https://existing-api.invalid\n")
     (tmp_path / ".env").write_text("DATABASE_URL=postgresql://existing-db/app\nJWT_SECRET=existing-secret\n")
@@ -19,7 +26,10 @@ def test_existing_env_is_default_even_when_local_profile_exists(tmp_path, monkey
     env, frontend, _, _, directory = run_app.load_environment(tmp_path / ".env")
     assert env["DATABASE_URL"] == "postgresql://existing-db/app"
     assert frontend["BACKEND_URL"] == "https://existing-api.invalid"
-    assert "JWT_SECRET" not in frontend
+    # Root .env values must not be copied into the frontend process, while
+    # existing process variables retain the normal subprocess inheritance.
+    assert frontend.get("JWT_SECRET") == process_secret
+    assert env["JWT_SECRET"] == (process_secret or "existing-secret")
     assert directory == tmp_path / ".runtime"
 
 
