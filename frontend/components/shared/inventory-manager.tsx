@@ -19,7 +19,7 @@ export interface InventoryItem {
   storeId: string | null;
 }
 
-export function InventoryManager({ title = "Kho xe đại lý", showStores = false }: { title?: string; showStores?: boolean }) {
+export function InventoryManager({ title = "Kho xe đại lý", showStores = false, storeFilterLabel = "Cửa hàng được phân quyền" }: { title?: string; showStores?: boolean; storeFilterLabel?: string }) {
   const [storeId, setStoreId] = useState('');
   const query = useStaffData<{ inventory: InventoryResponse[] }>('seller-inventory', '/api/inventory' + (storeId ? '?store_id=' + storeId : ''));
   const storeQuery = useStaffData<{ stores: { id: string; name: string }[] }>('staff-stores', '/api/stores');
@@ -58,7 +58,7 @@ export function InventoryManager({ title = "Kho xe đại lý", showStores = fal
   return (
     <div className="p-6 space-y-6">
       {(query.error || storeQuery.error || actionError) && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{actionError || query.error?.message || storeQuery.error?.message}</p>}
-      {showStores && <label className="block text-sm text-slate-600">Cửa hàng được phân quyền
+      {showStores && <label className="block text-sm text-slate-600">{storeFilterLabel}
         <select value={storeId} onChange={(e) => { setStoreId(e.target.value); setEditId(null); }} className="ml-3 rounded-xl border p-2">
           <option value="">Tất cả trong phạm vi tài khoản</option>{stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
         </select>

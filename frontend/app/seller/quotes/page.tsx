@@ -1,15 +1,15 @@
 "use client";
 
-import { BRAND } from "@/lib/brand";
 import type { QuoteResponse } from "@/lib/api-types";
 
 import { useState } from "react";
 import { useStaffData, apiRequest, refreshStaffData } from "@/hooks/use-staff-data";
 import { formatVND } from "@/lib/format";
-import { CheckCircle, XCircle, Clock, Eye, RefreshCw, Car, FileDown } from "lucide-react";
+import { CheckCircle, XCircle, Clock, Eye, RefreshCw, Car, ExternalLink, Send, ClipboardCheck, X } from "lucide-react";
 
 export interface QuoteRecord {
   id: string;
+  leadId: string;
   leadName: string;
   phone: string;
   model: string;
@@ -38,7 +38,7 @@ const STATUS_CONFIG: Record<
 export default function QuotesPage() {
   const query = useStaffData<{ quotes: QuoteResponse[] }>('seller-quotes', '/api/quotes');
   const quotes: QuoteRecord[] = (query.data?.quotes ?? []).map((q) => ({
-    id: q.id, leadName: q.buyer_name ?? 'Khách hàng', phone: q.buyer_phone ?? '', model: q.model,
+    id: q.id, leadId: q.lead_id ?? '', leadName: q.buyer_name ?? 'Khách hàng', phone: q.buyer_phone ?? '', model: q.model,
     version: q.version, color: q.color, province: q.province, finalPrice: Number(q.final_price),
     priceVersion: q.price_version, status: q.status as QuoteRecord['status'], sellerNote: q.seller_note,
     createdAt: new Date(q.created_at + (q.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString('vi-VN'),
@@ -53,7 +53,13 @@ export default function QuotesPage() {
   const [filterStatus, setFilter] = useState('all');
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState('');
-  const handleReview = async (id: string, action: 'approve' | 'reject') => {
+  const [reviewedIds, setReviewedIds] = useState<string[]>([]);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [batchDialog, setBatchDialog] = useState<{ ready: { id: string; buyer_name: string; model: string; version: string; final_price: number }[]; blocked: { id: string; buyer_name?: string | null; model?: string | null; reason: string }[] } | null>(null);
+  const [sentCampaignId, setSentCampaignId] = useState('');
+  const [linkRecipient, setLinkRecipient] = useState(false);
+  const [recipientNotice, setRecipientNotice] = useState('');
+  const handleReview = async (id: string, action: 'reject') => {
     if (submitting) return;
     setSubmitting(true); setActionError('');
     try {
@@ -62,6 +68,31 @@ export default function QuotesPage() {
       });
       await refreshStaffData();
     } catch (error) { setActionError(error instanceof Error ? error.message : 'Không xử lý được báo giá.'); }
+    finally { setSubmitting(false); }
+  };
+
+  const selectedReviewed = reviewedIds.filter((id) => quotes.some((q) => q.id === id && q.status === 'pending'));
+  const inspectBatch = async () => {
+    if (!selectedReviewed.length || submitting) return;
+    setSubmitting(true); setActionError(''); setSentCampaignId('');
+    try {
+      const result = await apiRequest<NonNullable<typeof batchDialog>>('/api/zalo/quote-review/preview', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quote_ids: selectedReviewed }),
+      });
+      setBatchDialog(result);
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Không kiểm tra được điều kiện gửi Zalo.'); }
+    finally { setSubmitting(false); }
+  };
+  const approveAndSend = async () => {
+    if (!batchDialog?.ready.length || submitting) return;
+    setSubmitting(true); setActionError('');
+    try {
+      const result = await apiRequest<{ campaign_id: string; approved: number }>('/api/zalo/quote-review/approve-and-send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quote_ids: batchDialog.ready.map((q) => q.id) }),
+      });
+      setSentCampaignId(result.campaign_id); setReviewedIds((ids) => ids.filter((id) => !batchDialog.ready.some((q) => q.id === id)));
+      setBatchDialog(null); await refreshStaffData();
+    } catch (error) { setActionError(error instanceof Error ? error.message : 'Không thể duyệt và gửi báo giá.'); }
     finally { setSubmitting(false); }
   };
 
@@ -74,20 +105,22 @@ export default function QuotesPage() {
       {(query.error || actionError) && <p role="alert" className="absolute z-20 rounded-xl bg-red-50 p-3 text-sm text-red-700">{actionError || query.error?.message}</p>}
       {/* ── LEFT: List ── */}
       <div className="flex-1 p-6 space-y-5 overflow-y-auto">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Báo giá (Quotes)</h1>
             <p className="text-slate-500 text-sm mt-1">Duyệt và quản lý báo giá từ khách hàng</p>
           </div>
-          <button
-            onClick={() => query.refetch()}
-            disabled={loading}
-            className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-          >
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
-            Làm mới
-          </button>
+          <div className="flex gap-2">
+            <button onClick={inspectBatch} disabled={!selectedReviewed.length || submitting} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-700 text-white text-xs font-semibold disabled:opacity-50">
+              <Send size={14} /> Duyệt & gửi Zalo ({selectedReviewed.length})
+            </button>
+            <button onClick={() => query.refetch()} disabled={loading} className="flex items-center gap-2 px-3 py-1.5 border border-slate-200 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+              <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> Làm mới
+            </button>
+          </div>
         </div>
+        {sentCampaignId && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">Đã duyệt và đưa báo giá vào hàng đợi gửi Zalo. <a className="font-semibold underline" href="/seller/zalo">Theo dõi trạng thái gửi</a></div>}
+        {recipientNotice && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{recipientNotice}</div>}
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-4">
@@ -159,6 +192,7 @@ export default function QuotesPage() {
                         {STATUS_CONFIG[q.status]?.icon}
                         {STATUS_CONFIG[q.status]?.label ?? q.status}
                       </span>
+                      {reviewedIds.includes(q.id) && q.status === 'pending' && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">Đã kiểm tra</span>}
                     </div>
                     <p className="text-sm text-blue-600 font-medium">
                       {q.model} {q.version} · {q.color} · {q.province}
@@ -214,19 +248,12 @@ export default function QuotesPage() {
               <p className="text-xs text-blue-200 mt-1">Phiên bản bảng giá: {selected.priceVersion}</p>
             </div>
 
-            {/* Official PDF Download Button */}
-            <a
-              href={`/api/quotes/${selected.id}/pdf`}
-              target="_blank"
-              rel="noopener noreferrer"
-              download={`${BRAND.name}_BaoGia_${selected.id.slice(0, 8).toUpperCase()}.pdf`}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-blue-600 bg-blue-50/50 hover:bg-blue-100/60 text-blue-700 font-medium text-xs transition-colors shadow-sm"
-            >
-              <FileDown size={15} />
-              <span>Tải bản in Báo giá PDF chính thức</span>
-            </a>
-
-
+            <div className="flex gap-2">
+              <button onClick={() => setPreviewOpen(true)} className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-blue-600 bg-blue-50/50 hover:bg-blue-100/60 text-blue-700 font-medium text-xs">
+                <Eye size={15} /> Xem trước báo giá
+              </button>
+              <a href={`/api/quotes/${selected.id}/pdf`} target="_blank" rel="noopener noreferrer" className="px-3 flex items-center justify-center rounded-xl border text-slate-600" aria-label="Mở PDF"><ExternalLink size={15} /></a>
+            </div>
             {/* Note */}
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Ghi chú của tư vấn viên</p>
@@ -234,7 +261,7 @@ export default function QuotesPage() {
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 disabled={selected.status !== "pending"}
-                placeholder="Nhập ghi chú hoặc lý do phê duyệt/từ chối..."
+                placeholder="Nhập lý do từ chối hoặc ghi chú nội bộ..."
                 rows={3}
                 className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:bg-slate-50 disabled:text-slate-400"
               />
@@ -261,10 +288,17 @@ export default function QuotesPage() {
             <div className="p-4 border-t bg-slate-50 space-y-2">
               <button
                 disabled={submitting}
-                onClick={() => handleReview(selected.id, "approve")}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white font-medium text-sm transition-colors shadow-sm"
+                onClick={() => setLinkRecipient(true)}
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50 font-medium text-sm"
               >
-                <CheckCircle size={16} /> Duyệt báo giá
+                <Send size={15} /> Liên kết người nhận Zalo
+              </button>
+              <button
+                disabled={submitting}
+                onClick={() => setReviewedIds((ids) => ids.includes(selected.id) ? ids.filter((id) => id !== selected.id) : [...ids, selected.id])}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-medium text-sm transition-colors ${reviewedIds.includes(selected.id) ? 'border border-blue-300 bg-blue-50 text-blue-700' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+              >
+                <ClipboardCheck size={16} /> {reviewedIds.includes(selected.id) ? 'Bỏ đánh dấu đã kiểm tra' : 'Đánh dấu đã kiểm tra'}
               </button>
               <button
                 disabled={submitting}
@@ -284,10 +318,62 @@ export default function QuotesPage() {
           </div>
         </div>
       )}
+      {batchDialog && <div className="fixed inset-0 z-50 bg-slate-950/40 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="batch-title">
+        <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white shadow-xl p-6 space-y-4">
+          <div><h2 id="batch-title" className="text-lg font-bold text-slate-900">Kiểm tra lượt duyệt và gửi Zalo</h2><p className="mt-1 text-sm text-slate-500">Báo giá đủ điều kiện sẽ được duyệt và gửi kèm PDF tới khách qua tài khoản Zalo đã liên kết.</p></div>
+          {!batchDialog.ready.length && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Chưa có báo giá nào đủ điều kiện gửi. Các báo giá vẫn giữ trạng thái chờ duyệt.</p>}
+          {!!batchDialog.ready.length && <div><p className="font-semibold text-sm text-emerald-800 mb-2">Sẵn sàng ({batchDialog.ready.length})</p><div className="max-h-40 overflow-y-auto divide-y rounded-xl border">{batchDialog.ready.map((q) => <div key={q.id} className="flex justify-between gap-3 p-3 text-sm"><span>{q.buyer_name} · {q.model} {q.version}</span><b>{formatVND(Number(q.final_price))}</b></div>)}</div></div>}
+          {!!batchDialog.blocked.length && <div><p className="font-semibold text-sm text-amber-800 mb-2">Cần xử lý ({batchDialog.blocked.length})</p><div className="max-h-40 overflow-y-auto divide-y rounded-xl border">{batchDialog.blocked.map((q) => <div key={q.id} className="p-3 text-sm"><p className="font-medium">{q.buyer_name || `Báo giá ${q.id.slice(0, 8)}`}{q.model ? ` · ${q.model}` : ''}</p><p className="text-amber-800">{q.reason}</p></div>)}</div><a href="/seller/zalo" className="inline-block mt-2 text-sm text-blue-700 underline">Mở quản lý kết nối và người nhận Zalo</a></div>}
+          <div className="flex justify-end gap-2 border-t pt-4"><button onClick={() => setBatchDialog(null)} className="px-4 py-2 rounded-lg border text-sm">Đóng</button><button disabled={!batchDialog.ready.length || submitting} onClick={approveAndSend} className="px-4 py-2 rounded-lg bg-emerald-700 text-white text-sm font-semibold disabled:opacity-50">{submitting ? 'Đang xử lý…' : `Duyệt & gửi ${batchDialog.ready.length} báo giá`}</button></div>
+        </div>
+      </div>}
+      {previewOpen && selected && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-2 sm:p-5" role="dialog" aria-modal="true" aria-labelledby="quote-preview-title">
+        <section className="flex h-[96vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl sm:h-[94vh]">
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3 sm:px-6">
+            <div className="min-w-0"><h2 id="quote-preview-title" className="truncate font-semibold text-slate-900">Xem trước báo giá · {selected.leadName}</h2><p className="mt-0.5 text-xs text-slate-500">{selected.model} {selected.version} · {formatVND(selected.finalPrice)}</p></div>
+            <div className="flex shrink-0 items-center gap-2"><a href={`/api/quotes/${selected.id}/pdf`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"><ExternalLink size={15} /><span className="hidden sm:inline">Mở riêng</span></a><button onClick={() => setPreviewOpen(false)} aria-label="Đóng xem trước" className="rounded-lg border p-2 text-slate-600 hover:bg-slate-50"><X size={18} /></button></div>
+          </header>
+          <iframe title="PDF báo giá" src={`/api/quotes/${selected.id}/preview-pdf`} className="min-h-0 flex-1 bg-slate-100" />
+        </section>
+      </div>}
+      {linkRecipient && selected?.status === 'pending' && <RecipientLink quote={selected} onClose={() => setLinkRecipient(false)} onSaved={() => { setLinkRecipient(false); setRecipientNotice('Người nhận Zalo đã được liên kết. Bạn có thể tiếp tục đánh dấu và duyệt báo giá.'); }} />}
     </div>
   );
 }
 
 function Tag({ label }: { label: string }) {
   return <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{label}</span>;
+}
+
+function RecipientLink({ quote, onClose, onSaved }: { quote: QuoteRecord; onClose: () => void; onSaved: () => void }) {
+  const friends = useStaffData<{ friends: { uid: string; name: string }[] }>('quote-review-zalo-friends', '/api/zalo/friends', 0);
+  const [uid, setUid] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const save = async () => {
+    if (!quote.leadId || !uid || !consent || !note.trim() || busy) return;
+    setBusy(true); setError('');
+    try {
+      await apiRequest(`/api/zalo/contacts/${quote.leadId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ zalo_uid: uid, consent: true, consent_note: note.trim(), opted_out: false }),
+      });
+      onSaved();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Không lưu được người nhận Zalo.'); }
+    finally { setBusy(false); }
+  };
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby="recipient-link-title">
+    <section className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl">
+      <div><h2 id="recipient-link-title" className="font-semibold text-slate-900">Liên kết người nhận Zalo</h2><p className="mt-1 text-sm text-slate-500">{quote.leadName} · {quote.phone || 'Chưa có số điện thoại'}</p></div>
+      <label className="block space-y-2 text-sm font-medium">Chọn khách trong danh bạ Zalo<select className="w-full rounded-xl border border-slate-200 px-3 py-2.5" value={uid} onChange={(e) => setUid(e.target.value)}><option value="">Chọn người nhận</option>{friends.data?.friends.map((f) => <option key={f.uid} value={f.uid}>{f.name}</option>)}</select></label>
+      {friends.isPending && <p className="text-xs text-slate-500">Đang tải danh bạ Zalo…</p>}
+      {friends.error && <p className="text-sm text-red-700">{friends.error.message}</p>}
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-1 accent-emerald-700" />Khách hàng đã đồng ý nhận báo giá qua Zalo.</label>
+      <label className="block space-y-2 text-sm font-medium">Ghi nhận sự đồng ý<textarea className="w-full rounded-xl border border-slate-200 px-3 py-2" rows={2} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ví dụ: Khách đồng ý nhận báo giá khi tư vấn ngày…" /></label>
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      <div className="flex justify-end gap-2"><button disabled={busy} onClick={onClose} className="rounded-lg border px-4 py-2 text-sm">Đóng</button><button disabled={busy || !uid || !consent || !note.trim()} onClick={save} className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Đang lưu…' : 'Lưu người nhận'}</button></div>
+    </section>
+  </div>;
 }

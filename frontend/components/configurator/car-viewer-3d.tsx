@@ -327,8 +327,8 @@ function CarViewerContent({
       // Góc nhìn hiệu dụng là góc nhỏ hơn giữa dọc và ngang
       const effectiveFov = Math.min(fovY, fovX);
 
-      // Khoảng cách bao trọn toàn bộ xe vừa vặn, to đẹp và rõ nét (hệ số 1.08)
-      const distance = (radius / Math.sin(effectiveFov / 2)) * 1.08;
+      // Giảm nhẹ khoảng cách mặc định để xe hiển thị lớn hơn mà vẫn nằm trọn khung.
+      const distance = (radius / Math.sin(effectiveFov / 2)) * 0.94;
 
       const isVF8 = modelName.includes("VF 8") || modelName.includes("VF8");
 

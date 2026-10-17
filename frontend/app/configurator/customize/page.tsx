@@ -78,8 +78,8 @@ function Customize() {
       <LandingNav />
       <Stepper current={1} query={query} />
 
-      <main className="min-h-0 flex-1 overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_440px] xl:grid-rows-1 xl:overflow-hidden">
-        <section className="sticky top-0 z-20 flex h-[35dvh] min-h-[245px] w-full flex-col overflow-hidden border-b border-[#172a27]/10 bg-[#f2f3eb] xl:relative xl:h-full xl:border-b-0">
+      <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden xl:grid xl:grid-cols-[minmax(0,1fr)_440px] xl:grid-rows-1">
+        <section className="sticky top-0 z-20 flex h-[35dvh] min-h-[245px] w-full flex-none flex-col overflow-hidden border-b border-[#172a27]/10 bg-[#f2f3eb] xl:relative xl:h-full xl:border-b-0">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_55%_48%,#dce7dc_0%,#e8ede2_43%,#f2f3eb_72%)]" />
           <div className="pointer-events-none absolute right-[8%] top-[4%] aspect-square w-[72%] rounded-full border border-[#134c40]/10" />
           <div className="pointer-events-none absolute right-[14%] top-[10%] aspect-square w-[60%] rounded-full border border-[#134c40]/[0.07]" />
@@ -142,7 +142,7 @@ function Customize() {
           </div>
         </section>
 
-        <section className="min-h-0 space-y-7 px-5 py-6 sm:px-8 xl:overflow-y-auto xl:border-l xl:border-[#172a27]/10 xl:px-7">
+        <section className="min-h-0 flex-1 overflow-y-auto space-y-7 px-5 pt-6 pb-[320px] sm:px-8 xl:col-start-2 xl:row-start-1 xl:flex-none xl:border-l xl:border-[#172a27]/10 xl:px-7 xl:pb-[220px]">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-[#577267]">
               BƯỚC 2 · TÙY CHỈNH XE
@@ -336,53 +336,23 @@ function Customize() {
             </div>
           </Group>
 
-          <Link
-            href={`/configurator/quote?${query}`}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#134c40] px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-[#1f6352] xl:hidden"
-          >
-            Xem báo giá
+        </section>
+
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#172a27]/10 bg-[#f6f5f0] px-5 pt-4 pb-[calc(5rem+env(safe-area-inset-bottom,0px))] shadow-[0_-8px_24px_rgba(23,42,39,0.10)] sm:px-8 sm:pt-5 xl:absolute xl:inset-x-auto xl:bottom-0 xl:right-0 xl:z-30 xl:w-[440px] xl:border-l xl:px-7 xl:pb-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-medium text-[#69756d]">Dự tính lăn bánh</p>
+              <p className="mt-1 text-xl font-bold leading-tight text-[#134c40] sm:text-2xl">{formatNumber(pricing.finalPrice)} ₫</p>
+            </div>
+            <p role="status" className={`max-w-[45%] text-right text-[10px] sm:text-xs ${canQuote ? "text-[#458e73]" : "text-amber-700"}`}>{statusMessage}</p>
+          </div>
+          <Link href={`/configurator/quote?${query}`} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#134c40] px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-[#1f6352]">
+            Xem báo giá chi tiết
             <ArrowLeft className="rotate-180" size={17} />
           </Link>
-        </section>
+        </div>
       </main>
 
-      <footer className="z-30 flex-none border-t border-[#172a27]/10 bg-[#fdfcf8] px-4 py-3 pb-[calc(12px+env(safe-area-inset-bottom,0px))] sm:px-7 xl:px-10">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3">
-          <div className="hidden min-w-0 items-center gap-3 text-xs text-[#69756d] xl:flex">
-            <span className="font-semibold text-[#315548]">
-              VinFast {selectedVehicle.label} {pricing.version.label}
-            </span>
-            <span className="text-[#9aa79c]">·</span>
-            <span>{pricing.color.label}</span>
-          </div>
-
-          <div className="ml-auto flex min-w-0 items-center justify-end gap-3 sm:gap-5">
-            <div className="min-w-0 text-right">
-              <p className="truncate text-[10px] font-medium text-[#69756d] sm:text-xs">
-                Dự tính lăn bánh
-              </p>
-              <p className="truncate text-lg font-bold leading-tight text-[#134c40] sm:text-2xl">
-                {formatNumber(pricing.finalPrice)} ₫
-              </p>
-              <p
-                role="status"
-                className={`mt-1 max-w-[220px] truncate text-[10px] ${canQuote ? "text-[#458e73]" : "text-amber-700"
-                  }`}
-              >
-                {statusMessage}
-              </p>
-            </div>
-
-            <Link
-              href={`/configurator/quote?${query}`}
-              className="shrink-0 rounded-full bg-[#134c40] px-4 py-3 text-xs font-semibold text-white shadow-sm transition hover:bg-[#1f6352] sm:px-7 sm:text-sm"
-            >
-              <span className="sm:hidden">Báo giá</span>
-              <span className="hidden sm:inline">Xem báo giá chi tiết</span>
-            </Link>
-          </div>
-        </div>
-      </footer>
     </div>
   );
 }

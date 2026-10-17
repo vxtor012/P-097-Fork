@@ -248,6 +248,7 @@ def quote_payload(quote):
     return {
         **{key: getattr(quote, key) for key in fields},
         "id": str(quote.id),
+        "lead_id": str(quote.lead_id) if quote.lead_id else None,
         "battery": quote.battery.value if quote.battery else None,
         "status": quote.status.value,
         "created_at": quote.created_at.isoformat(),
@@ -284,13 +285,13 @@ async def approve_quote(
     return {"message": "Đã xử lý báo giá", "status": quote.status.value}
 
 
-def pdf_response(quote):
+def pdf_response(quote, inline=False):
     payload = {**quote_payload(quote), "battery": quote.battery.value if quote.battery else None}
     return Response(
         generate_quote_pdf(payload),
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f'attachment; filename="P97_BaoGia_{str(quote.id)[:8]}.pdf"',
+            "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="P97_BaoGia_{str(quote.id)[:8]}.pdf"',
             "Cache-Control": "private, no-store",
         },
     )
@@ -301,6 +302,13 @@ async def get_quote_pdf(
     quote_id: UUID, db: AsyncSession = Depends(get_db, scope="function"), user: User = Depends(sales_user)
 ):
     return pdf_response(await find_quote(quote_id, user, db))
+
+
+@router.get("/quotes/{quote_id}/preview-pdf")
+async def preview_quote_pdf(
+    quote_id: UUID, db: AsyncSession = Depends(get_db, scope="function"), user: User = Depends(sales_user)
+):
+    return pdf_response(await find_quote(quote_id, user, db), inline=True)
 
 
 @router.post("/quote/export-pdf")

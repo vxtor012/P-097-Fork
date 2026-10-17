@@ -16,6 +16,7 @@ export interface LeadResponse {
 
 export interface QuoteResponse {
   id: string;
+  lead_id?: string | null;
   buyer_name: string | null;
   buyer_phone: string | null;
   model: string;

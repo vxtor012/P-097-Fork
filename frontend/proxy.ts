@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 const ROLES: Record<string, string[]> = {
   "/seller": ["seller", "admin"],
   "/warehouse": ["warehouse", "warehouse_manager", "admin"],
+  "/admin": ["admin"],
 };
 
 export async function proxy(req: NextRequest) {
@@ -28,4 +29,4 @@ export async function proxy(req: NextRequest) {
   return NextResponse.redirect(target);
 }
 
-export const config = { matcher: ["/seller/:path*", "/warehouse/:path*"] };
+export const config = { matcher: ["/seller/:path*", "/warehouse/:path*", "/admin/:path*"] };

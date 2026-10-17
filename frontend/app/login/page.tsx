@@ -44,6 +44,9 @@ const SAFE_FROM = [
   "/seller/promotions",
   "/seller/inventory",
   "/warehouse/dashboard",
+  "/admin",
+  "/admin/staff",
+  "/admin/vehicles",
 ];
 
 function LoginForm() {

@@ -44,11 +44,11 @@ Yêu cầu Python 3.11+, Node.js 20.9+ và kết nối PostgreSQL Supabase. Ch�
 ### Backend và database
 
 ```bash
-python -m venv .venv
-# Linux/macOS
-source .venv/bin/activate
-# Windows PowerShell: .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python3.11 -m venv .venv
+# Linux/macOS: use the project interpreter directly so system Python is not selected by accident.
+.venv/bin/python -m pip install -r requirements.txt
+# Windows PowerShell setup: py -3.11 -m venv .venv
+# Windows PowerShell install: .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 cp .env.example .env
 # PowerShell: Copy-Item .env.example .env
 ```
@@ -56,9 +56,10 @@ cp .env.example .env
 Điền `DATABASE_URL`, `MIGRATION_DATABASE_URL` bằng chuỗi Supabase và chọn provider/model trong `.env`. Chuẩn bị schema/dữ liệu theo [guide nạp dữ liệu](docs/SUPABASE_DATA_IMPORT.md). Backend không tự seed/import khi khởi động. Nếu cần DB test riêng trên máy, chạy `docker compose --profile local-db up -d postgres`; không dùng DB vận hành để chạy test.
 
 ```bash
-python scripts/db/migrate_supabase.py upgrade
+.venv/bin/python scripts/db/migrate_supabase.py upgrade
 # Chuẩn bị dữ liệu AI theo docs/SUPABASE_DATA_IMPORT.md trước khi thử chat.
-python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+.venv/bin/python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+# Windows PowerShell: .\.venv\Scripts\python.exe -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Mở [health](http://localhost:8000/health) và [Swagger](http://localhost:8000/docs). Health chỉ phản ánh ứng dụng chạy, không xác nhận database hoặc AI hoạt động.

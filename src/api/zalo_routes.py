@@ -15,12 +15,132 @@ from src.api.business_routes import pdf_response
 from src.db import get_db
 from src.orm_models import Lead, Quote, QuoteStatus, User
 from src.services.access import dealer_scope, sales_user
+from src.services.auth import utcnow
 from src.services.zalo_bridge import bridge
 
 router = APIRouter(prefix="/zalo", tags=["Zalo"])
 DEFAULT_TEMPLATE = "Chào {name}, em gửi báo giá {model} {version}: {price} VNĐ (dự toán lăn bánh). Anh/chị phản hồi để em hỗ trợ thêm nhé."
 TOKENS = {"name", "model", "version", "price"}
 MAX_PDF_BYTES = 1024 * 1024
+
+
+class QuoteReviewBatch(BaseModel):
+    quote_ids: list[UUID] = Field(min_length=1)
+
+    @field_validator("quote_ids")
+    @classmethod
+    def unique_quote_ids(cls, value):
+        if len(value) != len(set(value)):
+            raise ValueError("Danh sách báo giá bị trùng")
+        return value
+
+
+async def quote_review_batch(body, user, db, lock=False):
+    dealer = scope(user, None)
+    query = select(Quote, Lead).join(Lead, Lead.id == Quote.lead_id).where(Quote.id.in_(body.quote_ids))
+    if dealer is not None:
+        query = query.where(Lead.dealer_id == dealer)
+    if lock:
+        query = query.with_for_update(of=Quote)
+    rows = (await db.execute(query)).all()
+    by_id = {str(quote.id): (quote, lead) for quote, lead in rows}
+    account = await bridge("GET", user.id)
+    account_uid = account.get("uid") if account.get("status") == "connected" else None
+    contacts = (await db.execute(
+        text("SELECT * FROM zalo_contacts WHERE user_id=:user"), {"user": user.id}
+    )).mappings().all()
+    contact_map = {str(contact["lead_id"]): contact for contact in contacts}
+    ready, blocked, seen = [], [], set()
+    for quote_id in body.quote_ids:
+        quote, lead = by_id.get(str(quote_id), (None, None))
+        reason = None
+        if quote is None:
+            reason = "Không tìm thấy báo giá trong phạm vi tài khoản của bạn."
+        elif quote.status != QuoteStatus.pending:
+            reason = "Báo giá này không còn ở trạng thái chờ duyệt."
+        elif staff_filter(user) is not None and lead.assigned_to != user.id:
+            reason = "Khách hàng chưa được giao cho bạn."
+        elif not account_uid:
+            reason = "Tài khoản Zalo của bạn chưa kết nối."
+        else:
+            contact = contact_map.get(str(lead.id))
+            if not contact:
+                reason = "Chưa liên kết khách hàng với người nhận Zalo."
+            elif not contact["consent_at"] or contact["opted_out"]:
+                reason = "Khách hàng chưa đồng ý nhận tin Zalo hoặc đã từ chối nhận tin."
+            elif contact["account_uid"] != account_uid:
+                reason = "Người nhận đang liên kết với tài khoản Zalo khác."
+            elif contact["zalo_uid"] in seen:
+                reason = "Một khách hàng chỉ nhận một báo giá trong mỗi lần gửi."
+        if reason:
+            blocked.append({"id": str(quote_id), "buyer_name": quote.buyer_name if quote else None,
+                            "model": quote.model if quote else None, "reason": reason})
+        else:
+            seen.add(contact["zalo_uid"])
+            ready.append({"quote": quote, "lead": lead, "contact": contact})
+    return ready, blocked, account_uid
+
+
+@router.post("/quote-review/preview")
+async def preview_quote_review(
+    body: QuoteReviewBatch,
+    user: User = Depends(sales_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+):
+    ready, blocked, account_uid = await quote_review_batch(body, user, db)
+    return {
+        "ready": [{"id": str(item["quote"].id), "buyer_name": item["quote"].buyer_name,
+                   "model": item["quote"].model, "version": item["quote"].version,
+                   "final_price": item["quote"].final_price} for item in ready],
+        "blocked": blocked,
+        "zalo_connected": bool(account_uid),
+    }
+
+
+@router.post("/quote-review/approve-and-send", status_code=201)
+async def approve_and_send_quote_batch(
+    body: QuoteReviewBatch,
+    user: User = Depends(sales_user),
+    db: AsyncSession = Depends(get_db, scope="function"),
+):
+    ready, blocked, account_uid = await quote_review_batch(body, user, db, lock=True)
+    if blocked or len(ready) != len(body.quote_ids):
+        raise HTTPException(409, "Một số báo giá không còn đủ điều kiện. Hãy làm mới danh sách và kiểm tra lại.")
+    dealers = {item["lead"].dealer_id for item in ready}
+    if len(dealers) != 1 or None in dealers:
+        raise HTTPException(422, "Mỗi lượt gửi chỉ áp dụng cho báo giá thuộc cùng một đại lý.")
+    dealer = next(iter(dealers))
+    campaign_id = uuid4()
+    deliveries = []
+    for item in ready:
+        quote, lead, contact = item["quote"], item["lead"], item["contact"]
+        try:
+            pdf_data = (await asyncio.to_thread(pdf_response, quote)).body
+        except Exception as exc:
+            raise HTTPException(422, "Không tạo được PDF cho một báo giá. Chưa có báo giá nào được duyệt.") from exc
+        if not pdf_data.startswith(b"%PDF-") or len(pdf_data) > MAX_PDF_BYTES:
+            raise HTTPException(422, "PDF báo giá không hợp lệ hoặc vượt quá 1 MB. Chưa có báo giá nào được duyệt.")
+        deliveries.append({
+            "id": uuid4(), "campaign": campaign_id, "lead": lead.id, "quote": quote.id,
+            "uid": contact["zalo_uid"], "message": render_message(DEFAULT_TEMPLATE, quote),
+            "pdf_data": pdf_data, "pdf_name": f"P97_BaoGia_{quote.id}.pdf",
+        })
+    for item in ready:
+        quote = item["quote"]
+        quote.status = QuoteStatus.approved
+        quote.seller_id = user.id
+        quote.reviewed_at = utcnow()
+    await db.execute(text("""INSERT INTO zalo_campaigns
+        (id,dealer_id,created_by,name,template,account_uid,status,attach_pdf)
+        VALUES (:id,:dealer,:user,:name,:template,:account,'active',TRUE)"""), {
+            "id": campaign_id, "dealer": dealer, "user": user.id,
+            "name": f"Báo giá duyệt {utcnow():%d/%m/%Y %H:%M}",
+            "template": DEFAULT_TEMPLATE, "account": account_uid,
+        })
+    await db.execute(text("""INSERT INTO zalo_deliveries
+        (id,campaign_id,lead_id,quote_id,zalo_uid,message,pdf_data,pdf_name)
+        VALUES (:id,:campaign,:lead,:quote,:uid,:message,:pdf_data,:pdf_name)"""), deliveries)
+    return {"campaign_id": str(campaign_id), "approved": len(ready), "queued": len(deliveries)}
 
 
 def scope(user, requested):

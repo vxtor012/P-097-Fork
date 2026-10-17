@@ -15,7 +15,7 @@ interface AuthState {
 }
 export const ROLE_HOME: Record<UserRole, string> = {
   buyer: "/configurator", seller: "/seller/dashboard", warehouse: "/warehouse/dashboard",
-  warehouse_manager: "/warehouse/dashboard", admin: "/seller/dashboard",
+  warehouse_manager: "/warehouse/dashboard", admin: "/admin",
 };
 let sessionRevision = 0;
 export const useAuthStore = create<AuthState>()((set) => ({
