@@ -44,6 +44,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:?Set DATABASE_URL to the Supabase PostgreSQL connection string}
       - REDIS_URL=${DOCKER_REDIS_URL:-redis://redis:6379/0}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://frontend:3000}
+      - ZALO_BRIDGE_URL=http://zalo-bridge:8010
     depends_on:
       redis:
         condition: service_started
@@ -55,6 +56,35 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  zalo-bridge:
+    profiles: ["zalo"]
+    build: ./zalo-bridge
+    environment:
+      ZALO_BRIDGE_TOKEN: ${ZALO_BRIDGE_TOKEN:-}
+      ZALO_SESSION_KEY: ${ZALO_SESSION_KEY:-}
+    volumes:
+      - zalo_sessions:/data
+    networks:
+      - vinfast_net
+    restart: unless-stopped
+
+  zalo-worker:
+    profiles: ["zalo"]
+    build: .
+    command: ["python", "-m", "src.zalo_worker"]
+    healthcheck:
+      disable: true
+    env_file:
+      - .env
+    environment:
+      ZALO_BRIDGE_URL: http://zalo-bridge:8010
+    depends_on:
+      zalo-bridge:
+        condition: service_started
+    networks:
+      - vinfast_net
+    restart: unless-stopped
 
   frontend:
     build:
@@ -81,3 +111,4 @@ networks:
 
 volumes:
   vinfast_pg_data:
+  zalo_sessions:

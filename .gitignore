@@ -72,3 +72,6 @@ supabase/.temp/
 supabase/.branches/
 *.dump
 *.backup
+zalo-bridge/data/
+.local/
+.runtime/

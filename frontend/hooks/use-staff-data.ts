@@ -14,12 +14,12 @@ export async function apiRequest<T>(url: string, options: RequestInit = {}): Pro
   return res.json();
 }
 
-export function useStaffData<T>(key: string, url: string) {
+export function useStaffData<T>(key: string, url: string, interval = 10000) {
   const user = useAuthStore((s) => s.user);
   return useQuery({
     queryKey: [key, user?.id, url], enabled: !!user,
     queryFn: ({ signal }) => apiRequest<T>(url, { signal }),
-    refetchInterval: 10000, refetchIntervalInBackground: false, retry: false,
+    refetchInterval: interval, refetchIntervalInBackground: false, retry: false,
   }, getQueryClient());
 }
 

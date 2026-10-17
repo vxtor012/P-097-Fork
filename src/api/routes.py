@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agents.graph import agent
 from src.api.business_routes import active_dealer
 from src.api.business_routes import router as business_router
+from src.api.zalo_routes import router as zalo_router
 from src.config import get_settings
 from src.db import get_db
 from src.models.schemas import (
@@ -451,3 +452,5 @@ async def chat_history(session_id: str, db: AsyncSession = Depends(get_db, scope
 
 
 router.include_router(business_router)
+
+router.include_router(zalo_router)

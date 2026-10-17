@@ -122,6 +122,10 @@ Corpus embedding cố định là `text-embedding-3-small`; đổi model chat kh
 
 ## API và giao diện
 
+Gửi báo giá qua Zalo cá nhân trên website: xem [hướng dẫn kết nối và triển khai](docs/ZALO_INTEGRATION.md).
+Module ở `/seller/zalo` dùng Node bridge và worker riêng. Chạy local bằng
+`python scripts/run_app.py` bằng các biến môi trường/`.env` hiện có; Docker dùng profile `zalo`.
+
 Endpoint backend có prefix `/api/v1`; schema request/response xem tại Swagger.
 
 | API | Mục đích |

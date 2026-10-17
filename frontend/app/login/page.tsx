@@ -40,6 +40,7 @@ const SAFE_FROM = [
   "/seller/dashboard",
   "/seller/leads",
   "/seller/quotes",
+  "/seller/zalo",
   "/seller/promotions",
   "/seller/inventory",
   "/warehouse/dashboard",

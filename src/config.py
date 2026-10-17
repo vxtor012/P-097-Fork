@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     jwt_secret: str = ""
     session_days: int = Field(default=7, ge=1, le=30)
+    zalo_bridge_url: str = "http://127.0.0.1:8010"
+    zalo_bridge_token: str = ""
 
     # LLM
     llm_provider: Literal["auto", "openai", "google"] = "auto"

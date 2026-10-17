@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutDashboard, Tag, Package, Users, FileCheck } from "lucide-react";
+import { LayoutDashboard, Tag, Package, Users, FileCheck, MessageCircle } from "lucide-react";
 import { DashboardShell } from "@/components/shared/dashboard-shell";
 
 const NAV = [
@@ -9,6 +9,7 @@ const NAV = [
   { href: "/seller/inventory", icon: Package, label: "Kho xe" },
   { href: "/seller/leads", icon: Users, label: "Khách hàng" },
   { href: "/seller/quotes", icon: FileCheck, label: "Báo giá" },
+  { href: "/seller/zalo", icon: MessageCircle, label: "Zalo & gửi báo giá" },
 ];
 
 export default function SellerLayout({ children }: { children: React.ReactNode }) {
