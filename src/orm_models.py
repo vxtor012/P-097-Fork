@@ -279,4 +279,30 @@ class ConversationThread(Base):
     id = Column(String(100), primary_key=True)
     messages = Column(JSON, nullable=False, default=list)
     profile = Column(JSON, nullable=False, default=dict)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    guest_secret_hash = Column(String(64), nullable=True)
     updated_at = Column(DateTime, nullable=False, default=utc_now)
+
+
+class PricingPolicy(Base):
+    __tablename__ = "pricing_policies"
+    id = Column(String(100), primary_key=True)
+    version = Column(String(100), nullable=False)
+    effective_from = Column(DateTime, nullable=False)
+    effective_to = Column(DateTime)
+    rules = Column(JSON, nullable=False)
+
+
+class EligibilityVerification(Base):
+    __tablename__ = "eligibility_verifications"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(String(100), ForeignKey("conversation_threads.id"), nullable=False, index=True)
+    dealer_id = Column(UUID(as_uuid=True), ForeignKey("dealers.id"), nullable=False)
+    attribute = Column(String(100), nullable=False)
+    value = Column(String(255), nullable=False)
+    status = Column(String(20), nullable=False, default="pending")
+    evidence_ref = Column(String(500))
+    verified_by = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    verified_at = Column(DateTime)
+    created_at = Column(DateTime, nullable=False, default=utc_now)
+    events = Column(JSON, nullable=False, default=list)

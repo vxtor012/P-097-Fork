@@ -5,7 +5,7 @@ import type { Config } from "@/hooks/use-configurator";
 export function fromQuery(sp: { get(k: string): string | null }): Partial<Config> {
   const m = sp.get("model")?.replace(/\s/g, '').toUpperCase() as VehicleKey | undefined;
   if (!m || !(m in VEHICLES)) return {
-    battery: sp.get("battery") === "buy" ? "buy" : "rent",
+    battery: sp.get("battery") === "rent" ? "rent" : "buy",
     provinceId: sp.get("province") || "HN",
     dealerId: sp.get("dealer") ?? "",
   };
@@ -18,7 +18,7 @@ export function fromQuery(sp: { get(k: string): string | null }): Partial<Config
     model: m,
     versionId,
     colorId,
-    battery: sp.get("battery") === "buy" ? "buy" : "rent",
+    battery: sp.get("battery") === "rent" ? "rent" : "buy",
     provinceId: province || "HN",
     accessories: acc,
     dealerId: sp.get('dealer') ?? '',

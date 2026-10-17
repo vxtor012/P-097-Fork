@@ -124,6 +124,20 @@ demo, không chuyển thành dữ liệu thương mại chỉ bằng việc depl
 Rollback release có thể giữ schema mở rộng; không drop các bảng mới khi đã có
 phiên, báo giá hoặc hội thoại. Đổi `JWT_SECRET` sẽ buộc các phiên hiện tại đăng nhập lại.
 
+## Pricing policy release gate
+
+The migration `20261017090000_pricing_policy_and_session_ownership.sql` is a prerequisite for deploying code that reads pricing policies. `load_tables()` loads `pricing_policies` as part of the shared operational dataset; if the table is missing, pricing-dependent agent tools, configurator, quotes, and installment flows can all fail. Treat a failed or partially applied migration as a pricing outage, not a rental-only issue.
+
+1. Review the migration SQL and take a database backup.
+2. Run `python scripts/db/migrate_supabase.py upgrade` against staging first. Confirm the runner's reported target is the intended database; this workspace may also be configured for local Docker PostgreSQL or Supabase.
+3. Run the production build and staging smoke test before promoting: configurator returns a price and `pricing_hash`; submit a quote with `pricing_hash`, `price_version`, and `final_price`; approve it as a seller; then generate and inspect the official PDF.
+4. Apply the migration to the confirmed production database before activating the new application code. Coordinate the rollout so an old application binary does not continue handling pricing requests between migration and new-code activation; old code may still permit new battery-rental quotes under its previous policy.
+5. Deploy backend and frontend, then verify `/ready` and repeat the pricing smoke test in production.
+
+`pricing_hash` covers canonicalized full source rows and request inputs, rather than only the final total. Consequently, a metadata-only row edit can change the hash and cause a safe but unnecessary 409 refresh. Do not interpret every such 409 as a changed payable amount; inspect the pricing inputs and refresh the quote.
+
+Rollback to an older binary may be structurally compatible with additive schema changes, but a binary predating policy enforcement is not commercially safe because it can restore obsolete pricing behavior. Roll back only to a release that enforces the current policy, or use a controlled forward fix. Do not remove the migrated tables or columns during application rollback.
+
 ## Xử lý lỗi
 
 Nếu log báo `Production requires JWT_SECRET with at least 32 characters`, vào Render → service backend → **Environment**, thêm/sửa `JWT_SECRET` bằng secret ngẫu nhiên rồi chọn **Save, rebuild, and deploy**. Có thể sinh secret với `python -c "import secrets; print(secrets.token_urlsafe(48))"`; không commit giá trị này.

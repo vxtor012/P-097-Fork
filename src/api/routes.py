@@ -1,16 +1,17 @@
 import asyncio
+import json
 import re
 import unicodedata
 import uuid
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
-from langchain_core.messages import AIMessage, HumanMessage, messages_from_dict, messages_to_dict
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, messages_from_dict, messages_to_dict
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agents.graph import agent
+from src.agents.graph import agent, _authoritative_reply
 from src.api.business_routes import active_dealer
 from src.api.business_routes import router as business_router
 from src.config import get_settings
@@ -35,6 +36,7 @@ from src.orm_models import (
     User,
     UserStore,
     VehiclePrice,
+    Quote,
 )
 from src.services.auth import (
     create_access_token,
@@ -45,7 +47,9 @@ from src.services.auth import (
 )
 from src.services.config_actions import configuration_command
 from src.services.pdf_generator import generate_quote_pdf
-from src.services.pricing import load_pricing_tables, price_configuration
+from src.services.pricing import calculate_price, load_pricing_tables, price_configuration
+from src.services.customer_sessions import optional_customer, owned_thread, eligibility_tables
+from src.services.pricing_policy import PricingPolicyError
 
 router = APIRouter()
 
@@ -150,23 +154,55 @@ async def get_me(
 # ════════════════════════════════════════════════════════════
 # CHAT
 # ════════════════════════════════════════════════════════════
-def _invoke_agent(*args):
-    with dataset_scope():
+def _invoke_agent(*args, tables=None):
+    with dataset_scope(tables):
         return agent.invoke(*args)
 
 
+@router.post("/chat/session")
+async def customer_session(body: ChatRequest, request: Request,
+                           db: AsyncSession = Depends(get_db, scope="function"), user=Depends(optional_customer)):
+    thread = await owned_thread(body.session_id or uuid.uuid4(), request, db, user, create=True)
+    return {"session_id": thread.id}
+
+
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db, scope="function")) -> ChatResponse:
+async def chat(request: ChatRequest, http_request: Request,
+               db: AsyncSession = Depends(get_db, scope="function"), user=Depends(optional_customer)) -> ChatResponse:
     session_id = request.session_id or str(uuid.uuid4())
     try:
-        await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": "chat:" + session_id})
-        thread = (
-            await db.execute(select(ConversationThread).where(ConversationThread.id == session_id))
-        ).scalar_one_or_none()
+        thread = await owned_thread(session_id, http_request, db, user, create=True)
+        tables = await load_pricing_tables(db)
+        tables.update(await eligibility_tables(thread, db))
+        profile = thread.profile or {}
+        tables["customer_claims"] = {
+            **(profile.get("customer_claims", {}) or {}),
+            **{key: profile[key] for key in ("vinclub_tier", "customer_group", "purchase_channel")
+               if profile.get(key) is not None},
+        }
+        quotes = (await db.execute(select(Quote).where(Quote.session_id == thread.id))).scalars().all()
+        tables["quote_statuses"] = [{"id": str(q.id), "status": q.status.value,
+                                   "reviewed_at": q.reviewed_at.isoformat() if q.reviewed_at else None}
+                                  for q in quotes if q.session_id == thread.id]
         history = messages_from_dict(thread.messages) if thread else []
+        context = request.vehicle_context or (thread.profile or {}).get("configuration_draft", {})
+        slot = (thread.profile or {}).get("eligibility_slot")
+        slot_action = None
+        if slot and context:
+            answer = request.message.strip().casefold()
+            matched = next((v for v in slot["accepted_values"] if v.casefold() == answer), None)
+            if matched or answer in {"không biết", "bỏ qua", "khong biet", "bo qua", "không", "khong"}:
+                claims = {**(thread.profile or {}).get("customer_claims", {}),
+                          slot["attribute"]: matched or "__unknown__"}
+                context = {**context, "customer_claims": claims}
+                price = calculate_price(ConfigRequest(**context), tables)
+                price["configuration"] = context
+                reply, profile_update = _authoritative_reply([ToolMessage(content=json.dumps(price), tool_call_id="slot")])
+                thread.profile = {**(thread.profile or {}), **profile_update, "customer_claims": claims}
+                slot_action = {"response": reply}
         action = (
-            configuration_command(request.message, request.vehicle_context, await load_pricing_tables(db), utcnow())
-            if request.vehicle_context
+            slot_action or configuration_command(request.message, context, tables, utcnow())
+            if context
             else None
         )
         if action:
@@ -182,9 +218,10 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db, scope="f
                         "question": request.message,
                         "messages": history + [HumanMessage(content=request.message)],
                         "profile": thread.profile if thread else {},
-                        "vehicle_context": request.vehicle_context or {},
+                        "vehicle_context": context,
                     },
                     {"configurable": {"thread_id": session_id}},
+                    tables=tables,
                 ),
                 timeout=55,
             )
@@ -197,12 +234,18 @@ async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db, scope="f
         first = next((i for i in range(max(0, len(stored) - 100), len(stored)) if stored[i].type == "human"), 0)
         thread.messages = messages_to_dict(stored[first:])
         thread.profile = result.get("profile", thread.profile or {})
+        if context:
+            thread.profile = {**thread.profile, "configuration_draft":
+                              action.get("configuration_update", context) if action else
+                              thread.profile.get("configuration_draft") or context}
         thread.updated_at = utcnow()
         return ChatResponse(
             response=result.get("answer") or result.get("response", ""),
             configuration_update=action.get("configuration_update") if action else None,
             session_id=session_id,
         )
+    except PricingPolicyError as error:
+        return ChatResponse(response=error.detail["message"], session_id=session_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -373,26 +416,32 @@ async def agent_status():
 @router.post("/configurate", response_model=PricingResponse)
 async def configurate(
     req: ConfigRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db, scope="function"),
+    user=Depends(optional_customer),
 ):
     if req.dealer_id:
         await active_dealer(req.dealer_id, db)
-    return await price_configuration(req, db)
+    subject = await owned_thread(req.session_id, request, db, user) if req.session_id else None
+    return await price_configuration(req, db, subject)
 
 
 # ════════════════════════════════════════════════════════════
 # LEADS
 # ════════════════════════════════════════════════════════════
 @router.post("/quote/preview-pdf")
-async def preview_pdf(body: QuotePreview, db: AsyncSession = Depends(get_db, scope="function")):
+async def preview_pdf(body: QuotePreview, request: Request,
+                      db: AsyncSession = Depends(get_db, scope="function"), user=Depends(optional_customer)):
     """
     Direct preview/export from configurator state without requiring a prior saved quote.
     """
     if body.dealer_id:
         await active_dealer(body.dealer_id, db)
-    pricing = await price_configuration(body, db)
+    subject = await owned_thread(body.session_id, request, db, user) if body.session_id else None
+    pricing = await price_configuration(body, db, subject)
     payload = {
         **body.model_dump(),
+        "status": "draft_reference",
         "price_snapshot": pricing,
         "final_price": pricing["final_price"],
         "price_version": pricing["price_version"],
@@ -431,15 +480,13 @@ async def logout(session: AuthSession = Depends(get_current_session), user: User
 
 
 @router.get("/chat/history")
-async def chat_history(session_id: str, db: AsyncSession = Depends(get_db, scope="function")):
-    # Only opaque, browser-generated UUID capabilities may retrieve history.
+async def chat_history(session_id: str, request: Request,
+                       db: AsyncSession = Depends(get_db, scope="function"), user=Depends(optional_customer)):
     try:
         uuid.UUID(session_id)
     except ValueError:
         raise HTTPException(422, "Mã phiên hội thoại không hợp lệ") from None
-    thread = (
-        await db.execute(select(ConversationThread).where(ConversationThread.id == session_id))
-    ).scalar_one_or_none()
+    thread = await owned_thread(session_id, request, db, user)
     messages = messages_from_dict(thread.messages) if thread else []
     return {
         "messages": [

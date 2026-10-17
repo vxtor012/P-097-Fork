@@ -27,7 +27,7 @@ CONFIG = {
     "version": "Plus",
     "color": "Trắng",
     "province": "Hà Nội",
-    "battery": "rent",
+    "battery": "buy",
     "accessories": ["camera"],
 }
 
@@ -36,13 +36,15 @@ def test_price_uses_live_fees_and_one_offer():
     tables = business_tables()
     smaller = {**tables["promotions"][0], "id": UUID(int=3), "discount_value": 10_000_000}
     dealer = {**smaller, "dealer_id": UUID(int=4), "discount_value": 500_000_000}
-    conditional = {**smaller, "conditions": {"tier": "gold"}, "discount_value": 400_000_000}
+    conditional = {**smaller, "id": UUID(int=5), "conditions": {"vinclub_tier": "gold"}, "discount_value": 400_000_000}
     tables["promotions"] += [smaller, dealer, conditional]
     result = calculate_price(ConfigRequest(**CONFIG), tables)
-    assert result["final_price"] == 707_800_000
+    assert result["final_price"] == 807_800_000
     assert result["total_discount"] == 20_000_000
     assert len(result["promotions"]) == 1
     assert result["price_version"] == "test-v2"
+    pending = next(d for d in result["promotion_decisions"] if d["id"] == str(conditional["id"]))
+    assert pending["state"] == "eligible_pending_verification"
 
 
 @pytest.mark.parametrize("change,status", [("province", 422), ("accessory", 422), ("battery", 503)])
@@ -63,6 +65,38 @@ def test_duplicate_current_price_is_rejected():
     assert error.value.status_code == 409
 
 
+def test_rental_is_legacy_only_without_verified_contract():
+    tables = business_tables()
+    with pytest.raises(HTTPException) as error:
+        calculate_price(ConfigRequest(**{**CONFIG, "battery": "rent"}), tables)
+    assert error.value.detail["code"] == "battery_rental_legacy_only"
+    tables["eligibility_verifications"] = [dict(session_id="subject", dealer_id=UUID(int=10),
+        attribute="legacy_battery_rental", value="true", status="verified", verified_by=UUID(int=11),
+        verified_at=__import__('datetime').datetime.now(), evidence_ref="contract/123")]
+    tables["subject_id"] = "subject"
+    req = ConfigRequest(**{**CONFIG, "battery": "rent", "dealer_id": str(UUID(int=10))})
+    assert calculate_price(req, tables)["battery_cost"] == 0
+
+
+def test_pricing_hash_detects_component_changes_even_when_total_matches():
+    tables = business_tables()
+    request = ConfigRequest(**CONFIG)
+    original = calculate_price(request, tables)
+    tables["promotions"][0]["discount_value"] += 1_000_000
+    tables["rolling_costs"][0]["road_fee"] += 1_000_000
+    changed = calculate_price(request, tables)
+    assert changed["final_price"] == original["final_price"]
+    assert changed["pricing_hash"] != original["pricing_hash"]
+
+
+def test_unknown_promotion_condition_fails_closed():
+    tables = business_tables()
+    tables["promotions"][0]["conditions"] = {"unrecognized_key": "gold"}
+    result = calculate_price(ConfigRequest(**CONFIG), tables)
+    assert result["total_discount"] == 0
+    assert result["promotion_decisions"][0]["state"] == "data_unavailable"
+
+
 def test_public_repository_never_queries_ai_snapshot(monkeypatch):
     tables = business_tables()
     statements = []
@@ -73,7 +107,7 @@ def test_public_repository_never_queries_ai_snapshot(monkeypatch):
             self.table = statement.split(".")[-1]
 
         def fetchall(self):
-            return tables[self.table]
+            return tables.get(self.table, [])
 
     @contextmanager
     def cursor():
@@ -99,7 +133,7 @@ def test_ai_sees_business_updates_on_next_turn(monkeypatch):
     assert second["matched_versions"][0]["price_vnd"] == 710_000_000
     tables["promotions"][0]["discount_value"] = 21_000_000
     promo = json.loads(get_eligible_promotions.invoke({"vehicle_queries": ["VF6 Plus"]}))
-    assert promo["vehicles"][0]["programs"][0]["discount_vnd"] == 21_000_000
+    assert promo["promotion_decisions"][0]["state"] == "verified_applied"
 
 
 def test_ai_configuration_uses_same_calculator_and_color_price(monkeypatch):
@@ -134,24 +168,32 @@ def test_ai_configuration_uses_same_calculator_and_color_price(monkeypatch):
 @pytest.mark.asyncio
 async def test_catalog_configuration_quote_and_pdf_share_prices(client, operational_db, monkeypatch):
     session, tables = operational_db
+    customer_id = str(UUID(int=100))
+    secret = "a" * 64
+    import hashlib
+    tables["conversation_threads"] = [dict(id=customer_id, messages=[], profile={}, user_id=None,
+                                          guest_secret_hash=hashlib.sha256(secret.encode()).hexdigest())]
     catalog = (await client.get("/api/v1/vehicles")).json()
     assert catalog["vehicles"]["VF6"]["versions"][0]["price"] == 700_000_000
     assert catalog["provinces"]["Hà Nội"]["plateFee"] == 14_000_000
     assert catalog["accessories"][0]["id"] == "camera"
-    price = (await client.post("/api/v1/configurate", json=CONFIG)).json()
-    assert price["final_price"] == 707_800_000
+    price = (await client.post("/api/v1/configurate", json={**CONFIG, "session_id": customer_id,
+                               "dealer_id": str(UUID(int=10))},
+                               headers={"X-Chat-Secret": secret})).json()
+    assert price["final_price"] == 807_800_000
     body = {
         **CONFIG,
-        "session_id": "sync-test",
+        "session_id": customer_id,
         "buyer_name": "Test",
         "buyer_phone": "0900000000",
         "final_price": price["final_price"],
         "price_version": price["price_version"],
+        "pricing_hash": price["pricing_hash"],
         "price_snapshot": {"base_price": 1},
         "dealer_id": str(UUID(int=10)),
         "request_id": str(UUID(int=50)),
     }
-    response = await client.post("/api/v1/quotes", json=body)
+    response = await client.post("/api/v1/quotes", json=body, headers={"X-Chat-Secret": secret})
     assert response.status_code == 201
     objects = [call.args[0] for call in session.add.call_args_list]
     lead = next(o for o in objects if isinstance(o, Lead))
@@ -164,7 +206,8 @@ async def test_catalog_configuration_quote_and_pdf_share_prices(client, operatio
 
     captured = []
     monkeypatch.setattr(routes, "generate_quote_pdf", lambda data: captured.append(data) or b"%PDF-test")
-    pdf = await client.post("/api/v1/quote/preview-pdf", json={**CONFIG, "final_price": 1, "price_snapshot": {}})
+    pdf = await client.post("/api/v1/quote/preview-pdf", json={**CONFIG, "final_price": 1, "price_snapshot": {},
+                              "session_id": customer_id}, headers={"X-Chat-Secret": secret})
     assert pdf.status_code == 200
     assert captured[0]["final_price"] == price["final_price"]
     assert captured[0]["price_snapshot"]["base_price"] == quote.price_snapshot["base_price"]
@@ -173,18 +216,24 @@ async def test_catalog_configuration_quote_and_pdf_share_prices(client, operatio
 
 @pytest.mark.asyncio
 async def test_quote_conflict_creates_neither_lead_nor_quote(client, operational_db):
-    session, _ = operational_db
+    import hashlib
+    session, tables = operational_db
+    customer_id = str(UUID(int=101))
+    secret = "b" * 64
+    tables["conversation_threads"] = [dict(id=customer_id, messages=[], profile={}, user_id=None,
+                                          guest_secret_hash=hashlib.sha256(secret.encode()).hexdigest())]
     body = {
         **CONFIG,
-        "session_id": "sync-test",
+        "session_id": customer_id,
         "buyer_name": "Test",
         "buyer_phone": "0900000000",
         "final_price": 1,
         "price_version": "test-v2",
+        "pricing_hash": "0" * 64,
         "dealer_id": str(UUID(int=10)),
         "request_id": str(UUID(int=51)),
     }
-    response = await client.post("/api/v1/quotes", json=body)
+    response = await client.post("/api/v1/quotes", json=body, headers={"X-Chat-Secret": secret})
     assert response.status_code == 409
     session.add.assert_not_called()
 

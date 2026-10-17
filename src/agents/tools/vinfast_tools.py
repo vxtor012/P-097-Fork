@@ -3,7 +3,7 @@
 import json
 import re
 import unicodedata
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from functools import lru_cache
 from typing import Literal
 
@@ -14,6 +14,7 @@ from src import operational_data
 from src.agents.tools.rag import search_gold_knowledge
 from src.models.schemas import ConfigRequest
 from src.services.installment import estimate_installment
+from src.services.pricing_policy import tool_error
 
 
 @lru_cache(maxsize=4096)
@@ -248,6 +249,7 @@ def search_vehicles(
     seats: int | None = None,
     budget_million: float | None = None,
     segment: str | None = None,
+    include_images: bool = False,
 ) -> str:
     """Look up VinFast car trims, official catalog prices and available exterior colors.
 
@@ -260,6 +262,7 @@ def search_vehicles(
         seats: Not supported by the catalog yet; ignored with a note.
         budget_million: Maximum listed price, in million VND.
         segment: Not supported by the catalog yet; ignored with a note.
+        include_images: Include catalog image URLs only when the caller needs images. Defaults to false for compact agent responses.
     """
     catalog, _, _ = _load_data()
     vehicles, unmatched = _resolve(vehicle_queries)
@@ -274,6 +277,15 @@ def search_vehicles(
         )
     if budget_million is not None:
         vehicles = [v for v in vehicles if v["price_vnd"] <= budget_million * 1_000_000]
+        if not vehicle_queries:
+            # A recommendation begins with a bounded shortlist, not every trim
+            # and color in the catalog. Explicit model lookups stay complete.
+            shortlist = {}
+            for vehicle in sorted(vehicles, key=lambda item: (-item["price_vnd"], item["name"], item["edition"])):
+                shortlist.setdefault(vehicle["model_name"], vehicle)
+            if len(vehicles) > 3:
+                notes.append("Danh sách gợi ý giới hạn tối đa 3 mẫu trong ngân sách; chưa phải xếp hạng phù hợp nhất theo nhu cầu.")
+            vehicles = list(shortlist.values())[:3]
 
     if not vehicle_queries and not budget_million:
         groups: dict[str, list[dict]] = {}
@@ -301,7 +313,10 @@ def search_vehicles(
                 price_version=vehicle.get("price_version"),
             )
         if "colors" in fields:
-            record["exterior_colors"] = vehicle["colors"]
+            record["exterior_colors"] = [
+                color if include_images else {key: value for key, value in color.items() if key != "image_url"}
+                for color in vehicle["colors"]
+            ]
             record["colors_inferred_from_base_trim"] = vehicle["colors_inferred_from_base_trim"]
             record["unavailable_color_count"] = len(vehicle["unavailable_colors"])
             if not vehicle["colors"]:
@@ -327,7 +342,7 @@ def search_vehicles(
 
 @tool
 @operational_data.pinned
-def lookup_car_color_options(vehicle_queries: list[str]) -> str:
+def lookup_car_color_options(vehicle_queries: list[str], include_images: bool = False) -> str:
     """Look up exterior colors and color surcharges for VinFast trims.
 
     color_options lists colors currently marked available; unavailable_color_options lists colors the
@@ -335,6 +350,7 @@ def lookup_car_color_options(vehicle_queries: list[str]) -> str:
 
     Args:
         vehicle_queries: Car models or trims to look up, e.g. ["VF 3", "VF 6 Plus"].
+        include_images: Include catalog image URLs only when the caller needs images. Defaults to false for compact agent responses.
     """
     vehicles, unmatched = _resolve(vehicle_queries)
     available, unavailable = [], []
@@ -342,10 +358,14 @@ def lookup_car_color_options(vehicle_queries: list[str]) -> str:
         base = {"model": vehicle["model_name"], "edition": vehicle["edition"]}
         for color in vehicle["colors"]:
             option = {**base, **color}
+            if not include_images:
+                option.pop("image_url", None)
             if option not in available:
                 available.append(option)
         for color in vehicle["unavailable_colors"]:
             option = {**base, **color}
+            if not include_images:
+                option.pop("image_url", None)
             if option not in unavailable:
                 unavailable.append(option)
     notes = [f"Không tìm thấy màu xe: {query}" for query in unmatched]
@@ -521,6 +541,8 @@ def get_eligible_promotions(
     customer_group: CustomerGroup | None = None,
     purchase_channel: str | None = None,
     province: str | None = None,
+    dealer_id: str | None = None,
+    evaluation_date: str | None = None,
 ) -> str:
     """Check current VinFast promotions and calculate explicit cash discounts when eligible.
 
@@ -530,8 +552,21 @@ def get_eligible_promotions(
         customer_group: Eligibility group the user stated: public_security_military or green_switch. Leave null if unknown.
         purchase_channel: Sales channel the user stated, such as O2O. Leave null if unknown.
         province: Province stated by the user, required for provincial promotions.
+        evaluation_date: Optional ISO date (YYYY-MM-DD) for a reproducible eligibility check; defaults to today.
     """
+    try:
+        as_of = date.fromisoformat(evaluation_date) if evaluation_date else date.today()
+    except ValueError:
+        return json.dumps({"error": "evaluation_date phải có dạng YYYY-MM-DD", "retryable": False}, ensure_ascii=False)
     vehicles, unmatched = _resolve(vehicle_queries) if vehicle_queries else ([], [])
+    overview = operational_data.promotion_overview(
+        [v["model_name"] for v in vehicles], province, dealer_id,
+        {k: v for k, v in {"vinclub_tier": vinclub_tier, "customer_group": customer_group,
+                           "purchase_channel": purchase_channel}.items() if v is not None},
+        evaluation_date=as_of,
+    )
+    if overview is not None:
+        return json.dumps(overview, ensure_ascii=False)
     _, _, promotions = _load_data()
     if promotions is None:
         return json.dumps(
@@ -542,7 +577,7 @@ def get_eligible_promotions(
             },
             ensure_ascii=False,
         )
-    today = date.today()
+    today = as_of
     tier = _canonical_tier(vinclub_tier)
     group = _canonical_group(customer_group)
     channel = _normalize(purchase_channel) or None
@@ -556,7 +591,8 @@ def get_eligible_promotions(
         if (start and today < start) or (end and today > end):
             continue
         if promotion.get("start_date") and not (
-            promotion["start_date"] <= datetime.now(UTC).replace(tzinfo=None) <= promotion["end_date"]
+            datetime.combine(today, datetime.min.time()) <= promotion["end_date"]
+            and promotion["start_date"] <= datetime.combine(today, datetime.max.time())
         ):
             continue
         if promotion.get("dealer_id") or promotion.get("conditions"):
@@ -679,18 +715,28 @@ def price_vehicle_configuration(
     battery: Literal["buy", "rent"],
     accessories: list[str] | None = None,
     dealer_id: str | None = None,
+    customer_claims: dict[str, str] | None = None,
 ) -> str:
     """Calculate the same live configuration price as the configurator and saved quotes.
 
     All configuration values must come from the user or vehicle_context. Ask for
     missing values. Accessories are catalog codes, not display names. Discounts
-    include the largest eligible unconditional national or selected dealer offer.
+    include the largest verified eligible national or selected dealer offer.
+    Customer claims are not verification and never authorize a discount.
     Use this for exact rolling cost,
     including selected color, battery and accessories; TCO is a partial estimate.
     """
     vehicles, unmatched = _resolve([f"{model} {version}"])
     if unmatched or len(vehicles) != 1:
-        return json.dumps({"error": "Cần xác nhận đúng dòng xe và phiên bản trong catalog."}, ensure_ascii=False)
+        fallback, fallback_unmatched = _resolve([model])
+        if (
+            not fallback_unmatched
+            and len(fallback) == 1
+            and _normalize(fallback[0]["edition"]) == _normalize(version)
+        ):
+            vehicles, unmatched = fallback, []
+        else:
+            return json.dumps({"error": {"code": "configuration_invalid", "message": "Cần xác nhận đúng dòng xe và phiên bản trong catalog.", "retryable": False}}, ensure_ascii=False)
     vehicle = vehicles[0]
     chosen_color = next(
         (
@@ -702,7 +748,7 @@ def price_vehicle_configuration(
     )
     chosen_province, _ = _match_province(province)
     if not chosen_color or chosen_province is None:
-        return json.dumps({"error": "Màu xe hoặc tỉnh/thành chưa khớp dữ liệu hiện hành."}, ensure_ascii=False)
+        return json.dumps({"error": {"code": "configuration_invalid", "message": "Màu xe hoặc tỉnh/thành chưa khớp dữ liệu hiện hành.", "retryable": False}}, ensure_ascii=False)
     try:
         request = ConfigRequest(
             model=vehicle["model_name"],
@@ -712,10 +758,11 @@ def price_vehicle_configuration(
             battery=battery,
             accessories=accessories or [],
             dealer_id=dealer_id,
+            customer_claims=customer_claims or {},
         )
         result = operational_data.price_configuration(request)
     except HTTPException as error:
-        return json.dumps({"error": error.detail}, ensure_ascii=False)
+        return json.dumps(tool_error(error), ensure_ascii=False)
     result["configuration"] = request.model_dump(mode="json")
     return json.dumps(result, ensure_ascii=False)
 
@@ -766,6 +813,17 @@ def estimate_vehicle_installment(
     )
 
 
+@tool
+@operational_data.pinned
+def get_quote_status() -> str:
+    """Read quote statuses for the authorized current customer only. Never accepts another session ID."""
+    rows = operational_data.quote_statuses()
+    if rows is None:
+        return json.dumps({"error": {"code": "session_required", "retryable": False,
+                                     "message": "Cần mở phiên hội thoại được xác thực để xem trạng thái báo giá."}}, ensure_ascii=False)
+    return json.dumps({"quotes": rows}, ensure_ascii=False)
+
+
 VINFAST_TOOLS = [
     search_gold_knowledge,
     search_vehicles,
@@ -775,4 +833,5 @@ VINFAST_TOOLS = [
     get_eligible_promotions,
     price_vehicle_configuration,
     estimate_vehicle_installment,
+    get_quote_status,
 ]

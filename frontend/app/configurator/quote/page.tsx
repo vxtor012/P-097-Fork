@@ -93,6 +93,8 @@ function Quote() {
               <div key={p.name} className="flex justify-between py-3 text-green-700"><dt>{p.name} <span className="text-slate-400">({p.source})</span></dt><dd className="font-medium">-{formatVND(p.value)}</dd></div>
             ))}
           </dl>
+          {pricing.promotionDecisions.filter((d) => d.state === 'eligible_pending_verification').map((d) =>
+            <p key={d.id} className="mb-2 text-xs text-amber-800">{d.name}: chưa trừ tiền. Cần xác minh: {d.verification_requirements.map((r) => r.document).join('; ')}.</p>)}
           <div className="mt-2 flex items-end justify-between rounded-2xl bg-slate-900 px-5 py-4 text-white">
             <span className="text-sm text-white/70">Tổng dự tính</span><span className="text-2xl font-bold">{formatVND(pricing.finalPrice)}</span>
           </div>
@@ -117,7 +119,7 @@ function Quote() {
               className="w-full flex items-center justify-center gap-2 rounded-full border border-blue-600 py-3 font-semibold text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-60"
             >
               {downloadingPdf ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
-              <span>{downloadingPdf ? "Đang tạo PDF..." : "Tải Báo Giá PDF Ngay"}</span>
+              <span>{downloadingPdf ? "Đang tạo PDF..." : "Tải dự toán PDF"}</span>
             </button>
           </div>
           <p className="mt-3 text-xs text-slate-500">Giá chỉ mang tính tham khảo. Báo giá chính thức do tư vấn viên của đại lý xác nhận.</p>
@@ -129,17 +131,11 @@ function Quote() {
         isOpen={open}
         onClose={() => setOpen(false)}
         onConfirm={async (info) => {
-          const sessionId =
-            typeof window !== "undefined"
-              ? sessionStorage.getItem("vf_session") || crypto.randomUUID()
-              : "web-session";
-
           if (!canQuote || !config.dealerId) throw new Error('Hãy chọn đại lý và chờ xác nhận giá hiện hành.');
-          sessionStorage.setItem('vf_session', sessionId);
           // Backend creates the lead and quote in one transaction.
-          const payload = { ...pricingRequest, session_id: sessionId,
+          const payload = { ...pricingRequest,
             buyer_name: info.name, buyer_phone: info.phone, note: info.note,
-            price_version: pricing.priceVersion, final_price: pricing.finalPrice };
+            price_version: pricing.priceVersion, final_price: pricing.finalPrice, pricing_hash: pricing.pricingHash };
           const fingerprint = JSON.stringify(payload);
           if (requestRef.current?.fingerprint !== fingerprint) requestRef.current = { fingerprint, id: crypto.randomUUID() };
           const res = await fetch('/api/quotes', {

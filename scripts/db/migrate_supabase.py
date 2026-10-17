@@ -21,6 +21,17 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "supabase" / "migrations"
 
+# Additive database objects created by reviewed migrations. Keep this map exact:
+# upgrades must still reject a partially drifted or unexpected table schema.
+UPGRADE_ADDITIVE_COLUMNS = {
+    "conversation_threads": {"user_id", "guest_secret_hash"},
+    "pricing_policies": {"id", "version", "effective_from", "effective_to", "rules"},
+    "eligibility_verifications": {
+        "id", "session_id", "dealer_id", "attribute", "value", "status", "evidence_ref",
+        "verified_by", "verified_at", "created_at", "events",
+    },
+}
+
 
 class OperationError(ValueError):
     """An actionable error message that contains no credentials or row data."""
@@ -37,6 +48,18 @@ def connection_url(value: str) -> str:
     return value
 
 
+def migration_target(mode: str) -> str:
+    """Resolve a target without allowing write modes to guess the database."""
+    migration_url = os.environ.get("MIGRATION_DATABASE_URL", "").strip()
+    if mode != "check" and not migration_url:
+        raise OperationError(
+            "MIGRATION_DATABASE_URL must be set explicitly for bootstrap/upgrade; "
+            "DATABASE_URL fallback is allowed only for read-only check"
+        )
+    value = migration_url or os.environ.get("DATABASE_URL", "")
+    return connection_url(value)
+
+
 def target_label(value: str) -> str:
     """Show the target without exposing password or query-string secrets."""
     parsed = urlsplit(value)
@@ -46,6 +69,20 @@ def target_label(value: str) -> str:
     if parsed.port:
         host += f":{parsed.port}"
     return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+
+
+def supported_upgrade_missing(table: str, columns: list[str], row_counts: dict) -> bool:
+    """Accept only reviewed additive migration shapes before applying them."""
+    if table == "conversation_threads":
+        # ALTER TABLE ... ADD COLUMN IF NOT EXISTS can safely complete either
+        # missing ownership column on an otherwise existing legacy table.
+        return set(columns) <= UPGRADE_ADDITIVE_COLUMNS[table]
+    expected = UPGRADE_ADDITIVE_COLUMNS.get(table)
+    if expected is not None:
+        # A newly absent table is reported as its complete ORM column set.
+        # A partial table would not be repaired by CREATE TABLE IF NOT EXISTS.
+        return table not in row_counts and set(columns) == expected
+    return False
 
 
 def expected_columns() -> dict[str, set[str]]:
@@ -263,6 +300,7 @@ async def run(conn, mode: str, seed: bool = False) -> dict:
                     (table == "vehicle_prices" and set(cols) <= allowed)
                     or (table == "inventory" and set(cols) <= {"store_id"})
                     or (table in additive_tables and table not in before["row_counts"])
+                    or supported_upgrade_missing(table, cols, before["row_counts"])
                 )
             }
             if unsupported and await has_legacy_workflows(conn):
@@ -313,8 +351,7 @@ async def run(conn, mode: str, seed: bool = False) -> dict:
 
 async def main(args) -> int:
     load_dotenv(ROOT / ".env", override=False)
-    value = os.environ.get("MIGRATION_DATABASE_URL") or os.environ.get("DATABASE_URL", "")
-    url = connection_url(value)
+    url = migration_target(args.mode)
     print(f"Mode: {args.mode}; target: {target_label(url)}")
     host = urlsplit(url).hostname or ""
     ssl = os.environ.get("MIGRATION_SSLMODE")

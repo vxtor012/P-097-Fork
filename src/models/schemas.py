@@ -59,6 +59,8 @@ class ConfigRequest(InputModel):
     province: str
     accessories: list[str] = []
     dealer_id: UUID | None = None
+    session_id: UUID | None = None
+    customer_claims: dict[str, str] = Field(default_factory=dict, max_length=4)
 
 
 class PricingResponse(BaseModel):
@@ -76,6 +78,11 @@ class PricingResponse(BaseModel):
     battery_rent: int
     data_source: str
     dealer: dict | None = None
+    pricing_hash: str
+    promotion_decisions: list[dict]
+    eligibility_snapshot: list[dict]
+    battery_policy: dict | None = None
+    battery_options: dict[str, bool]
 
 
 # ── Leads ─────────────────────────────────────────────────────
@@ -120,7 +127,7 @@ class LeadOut(BaseModel):
 
 # ── Quotes ────────────────────────────────────────────────────
 class QuoteCreate(InputModel):
-    session_id: str = Field(min_length=1, max_length=100)
+    session_id: UUID
     buyer_name: str = Field(min_length=2, max_length=255)
     buyer_phone: str
     model: str
@@ -130,8 +137,10 @@ class QuoteCreate(InputModel):
     province: str
     accessories: list[str] = []
     price_snapshot: dict = Field(default_factory=dict)
-    price_version: str | None = None
-    final_price: int | None = None
+    price_version: str = Field(min_length=1, max_length=100)
+    final_price: int = Field(ge=0)
+    pricing_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    customer_claims: dict[str, str] = Field(default_factory=dict, max_length=4)
     note: str | None = Field(default=None, max_length=2000)
     dealer_id: UUID
     request_id: UUID
@@ -146,6 +155,16 @@ class QuotePreview(ConfigRequest):
 class QuoteApprove(BaseModel):
     action: Literal["approve", "reject"]
     seller_note: str | None = Field(default=None, max_length=2000)
+
+
+class VerificationCreate(InputModel):
+    attribute: Literal["vinclub_tier", "customer_group", "purchase_channel", "legacy_battery_rental"]
+    value: str = Field(min_length=1, max_length=255)
+
+
+class VerificationReview(InputModel):
+    action: Literal["verified", "rejected", "revoked"]
+    evidence_ref: str = Field(min_length=1, max_length=500)
 
 
 class QuoteOut(BaseModel):
@@ -179,6 +198,7 @@ class PromotionCreate(InputModel):
     end_date: datetime
     is_active: bool = True
     dealer_id: UUID | None = None
+    conditions: dict = Field(default_factory=dict)
 
     @field_validator("start_date", "end_date", mode="before")
     @classmethod
@@ -208,6 +228,7 @@ class PromotionUpdate(BaseModel):
     start_date: datetime | None = None
     end_date: datetime | None = None
     is_active: bool | None = None
+    conditions: dict | None = None
 
 
 class PromotionOut(BaseModel):

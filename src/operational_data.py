@@ -12,9 +12,10 @@ from types import SimpleNamespace
 
 from src.ai_data import cursor
 from src.services.pricing import calculate_price
+from src.services.pricing_policy import promotion_decision, trusted_verifications
 
 _tables = ContextVar("operational_tables", default=None)
-TABLE_NAMES = ("vehicle_prices", "battery_prices", "accessories", "rolling_costs", "promotions", 'dealers')
+TABLE_NAMES = ("vehicle_prices", "battery_prices", "accessories", "rolling_costs", "promotions", "dealers", "pricing_policies")
 
 
 def load_tables():
@@ -29,11 +30,11 @@ def load_tables():
 
 
 @contextmanager
-def dataset_scope():
+def dataset_scope(tables=None):
     if _tables.get() is not None:
         yield
         return
-    token = _tables.set(load_tables())
+    token = _tables.set(tables if tables is not None else load_tables())
     try:
         yield
     finally:
@@ -86,7 +87,7 @@ def catalog_rows(name):
                     "trim_name": v["version"],
                     "product_code": v["version"],
                     "price_vat_vnd": str(v["price"]),
-                    "battery_option": "rent",
+                    "battery_option": "buy",
                     "price_version": v["price_version"],
                 }
             )
@@ -134,7 +135,7 @@ def catalog_rows(name):
                     model=vehicle["model"],
                     version=vehicle["version"],
                     color=vehicle["color"],
-                    battery="rent",
+                    battery="buy",
                     province=fees["province"],
                     accessories=[],
                 )
@@ -177,4 +178,35 @@ def catalog_rows(name):
 
 def price_configuration(request):
     with dataset_scope():
-        return calculate_price(request, _tables.get())
+        tables = _tables.get()
+        if not request.customer_claims:
+            request = request.model_copy(update={"customer_claims": tables.get("customer_claims", {})})
+        return calculate_price(request, tables)
+
+
+def promotion_overview(models, province, dealer_id, claims, evaluation_date=None):
+    tables = _tables.get() or {}
+    if "promotions" not in tables:
+        return None
+    if evaluation_date:
+        now = datetime.combine(evaluation_date, datetime.max.time())
+    else:
+        now = datetime.now(UTC).replace(tzinfo=None)
+    records = trusted_verifications(tables, dealer_id)
+    decisions = []
+    for p in tables["promotions"]:
+        if not p["is_active"] or not p["start_date"] <= now <= p["end_date"]:
+            continue
+        if models and p["model"] != "ALL" and p["model"] not in models:
+            continue
+        if p["dealer_id"] and str(p["dealer_id"]) != str(dealer_id):
+            continue
+        if p["province"] and p["province"] != province:
+            continue
+        decisions.append(promotion_decision(p, records, claims))
+    return {"promotion_decisions": decisions,
+            "message": "Chỉ price_vehicle_configuration xác định ưu đãi được trừ vào cấu hình. Không cộng dồn; chưa xác minh thì chưa trừ tiền."}
+
+
+def quote_statuses():
+    return (_tables.get() or {}).get("quote_statuses")

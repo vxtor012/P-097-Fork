@@ -57,7 +57,7 @@ async def test_api_quote_preview_pdf(client, operational_db):
             "version": "Plus",
             "color": "Trắng",
             "province": "Hà Nội",
-            "battery": "rent",
+            "battery": "buy",
             "buyer_name": "Khách Test",
             "final_price": 599000000,
             "price_snapshot": {"base_price": 599000000},

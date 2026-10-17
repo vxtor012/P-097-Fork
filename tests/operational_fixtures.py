@@ -7,6 +7,10 @@ from uuid import UUID
 def business_tables():
     now = datetime.now().replace(tzinfo=None)
     return {
+        "pricing_policies": [dict(id="battery-rental-2025", version="rental-legacy-2025-03-01",
+                                  effective_from=now - timedelta(days=365), effective_to=None,
+                                  rules={"new_rental_allowed": False,
+                                         "rental_message": "Chính sách thuê pin mới đã dừng từ 01/03/2025. Chỉ áp dụng cho khách hàng đang thuê pin cũ, cần tư vấn viên xác minh hợp đồng."})],
         "dealers": [dict(id=UUID(int=10), name="Đại lý thử nghiệm", province="Hà Nội", is_active=True)],
         "vehicle_prices": [
             dict(

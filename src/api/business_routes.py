@@ -5,7 +5,7 @@ import json
 from collections import Counter
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import ValidationError
 from sqlalchemy import select, text
@@ -24,6 +24,8 @@ from src.models.schemas import (
     PromotionUpdate,
     QuoteApprove,
     QuoteCreate,
+    VerificationCreate,
+    VerificationReview,
 )
 from src.orm_models import (
     Dealer,
@@ -37,21 +39,25 @@ from src.orm_models import (
     QuoteStatus,
     Store,
     User,
+    EligibilityVerification,
 )
 from src.services.access import check_dealer, dealer_scope, inventory_user, permitted_stores, sales_user
 from src.services.auth import utcnow
 from src.services.installment import estimate_installment
 from src.services.pdf_generator import generate_quote_pdf
 from src.services.pricing import price_configuration
+from src.services.customer_sessions import optional_customer, owned_thread
 
 router = APIRouter()
 
 
 @router.post("/installment")
-async def installment(body: InstallmentRequest, db: AsyncSession = Depends(get_db, scope="function")):
+async def installment(body: InstallmentRequest, request: Request,
+                      db: AsyncSession = Depends(get_db, scope="function"), user=Depends(optional_customer)):
     if body.dealer_id:
         await active_dealer(body.dealer_id, db)
-    price = await price_configuration(body, db)
+    subject = await owned_thread(body.session_id, request, db, user) if body.session_id else None
+    price = await price_configuration(body, db, subject)
     return estimate_installment(price["final_price"], body.down_payment_pct, body.annual_rate_pct, body.term_months)
 
 
@@ -160,7 +166,9 @@ async def claim_lead(
 
 
 @router.post("/quotes", status_code=201)
-async def create_quote(body: QuoteCreate, db: AsyncSession = Depends(get_db, scope="function")):
+async def create_quote(body: QuoteCreate, request: Request,
+                       db: AsyncSession = Depends(get_db, scope="function"), user=Depends(optional_customer)):
+    subject = await owned_thread(body.session_id, request, db, user)
     payload_hash = hashlib.sha256(
         json.dumps(
             body.model_dump(mode="json", exclude={"price_snapshot"}), sort_keys=True, ensure_ascii=False
@@ -180,13 +188,14 @@ async def create_quote(body: QuoteCreate, db: AsyncSession = Depends(get_db, sco
             "message": "Yêu cầu này đã được ghi nhận",
         }
     await active_dealer(body.dealer_id, db)
-    pricing = await price_configuration(ConfigRequest(**body.model_dump()), db)
-    if body.price_version is not None and (
+    pricing = await price_configuration(ConfigRequest(**body.model_dump()), db, subject)
+    if (
         body.price_version != pricing["price_version"] or body.final_price != pricing["final_price"]
+        or body.pricing_hash != pricing["pricing_hash"]
     ):
         raise HTTPException(409, "Giá đã thay đổi. Vui lòng tải lại báo giá trước khi gửi.")
     lead = Lead(
-        session_id=body.session_id,
+        session_id=str(body.session_id),
         name=body.buyer_name,
         phone=body.buyer_phone,
         dealer_id=body.dealer_id,
@@ -199,8 +208,9 @@ async def create_quote(body: QuoteCreate, db: AsyncSession = Depends(get_db, sco
     db.add(lead)
     await db.flush()
     fields = body.model_dump(
-        exclude={"note", "price_snapshot", "price_version", "final_price", "dealer_id", "request_id"}
+        exclude={"note", "price_snapshot", "price_version", "final_price", "dealer_id", "request_id", "pricing_hash", "customer_claims"}
     )
+    fields["session_id"] = str(body.session_id)
     quote = Quote(
         **fields,
         lead_id=lead.id,
@@ -276,6 +286,11 @@ async def approve_quote(
     quote = await find_quote(quote_id, user, db)
     if quote.status != QuoteStatus.pending:
         raise HTTPException(409, "Báo giá đã được xử lý hoặc hết hạn. Hãy tải lại danh sách.")
+    if body.action == "approve" and any(
+        decision.get("state") == "eligible_pending_verification"
+        for decision in (quote.price_snapshot or {}).get("promotion_decisions", [])
+    ):
+        raise HTTPException(409, "Ưu đãi còn chờ xác minh. Hoàn tất xác minh, yêu cầu khách tải lại giá và gửi báo giá mới trước khi duyệt.")
     quote.status = QuoteStatus.approved if body.action == "approve" else QuoteStatus.rejected
     quote.seller_note = body.seller_note
     quote.seller_id = user.id
@@ -285,6 +300,8 @@ async def approve_quote(
 
 
 def pdf_response(quote):
+    if quote.status != QuoteStatus.approved:
+        raise HTTPException(409, "Báo giá chính thức cần tư vấn viên duyệt trước khi xuất PDF.")
     payload = {**quote_payload(quote), "battery": quote.battery.value if quote.battery else None}
     return Response(
         generate_quote_pdf(payload),
@@ -310,6 +327,78 @@ async def export_pdf(
     quote = await find_quote(quote_id, user, db)
     pdf_response(quote)
     return {"download_url": f"/api/quotes/{quote.id}/pdf", "status": "ready"}
+
+
+@router.get("/customer/quotes")
+async def customer_quotes(session_id: UUID, request: Request,
+                          db: AsyncSession = Depends(get_db, scope="function"), user=Depends(optional_customer)):
+    thread = await owned_thread(session_id, request, db, user)
+    rows = (await db.execute(select(Quote).where(Quote.session_id == thread.id).order_by(Quote.created_at.desc()))).scalars().all()
+    return {"quotes": [{"id": str(q.id), "status": q.status.value,
+                        "reviewed_at": q.reviewed_at.isoformat() if q.reviewed_at else None}
+                       for q in rows if q.session_id == thread.id]}
+
+
+def verification_payload(row):
+    return {"id": str(row.id), "attribute": row.attribute, "value": row.value, "status": row.status,
+            "evidence_ref": row.evidence_ref, "verified_by": str(row.verified_by) if row.verified_by else None,
+            "verified_at": row.verified_at.isoformat() if row.verified_at else None, "events": row.events}
+
+
+@router.get("/quotes/{quote_id}/verifications")
+async def list_verifications(quote_id: UUID, db: AsyncSession = Depends(get_db, scope="function"),
+                             user: User = Depends(sales_user)):
+    quote = await find_quote(quote_id, user, db)
+    lead = (await db.execute(select(Lead).where(Lead.id == quote.lead_id))).scalar_one()
+    rows = (await db.execute(select(EligibilityVerification).where(
+        EligibilityVerification.session_id == quote.session_id, EligibilityVerification.dealer_id == lead.dealer_id))).scalars().all()
+    return {"verifications": [verification_payload(r) for r in rows]}
+
+
+@router.post("/quotes/{quote_id}/verifications", status_code=201)
+async def create_verification(quote_id: UUID, body: VerificationCreate,
+                              db: AsyncSession = Depends(get_db, scope="function"), user: User = Depends(sales_user)):
+    quote = await find_quote(quote_id, user, db)
+    lead = (await db.execute(select(Lead).where(Lead.id == quote.lead_id))).scalar_one()
+    # Never create an identity for an old orphan just because a seller has a quote UUID.
+    from src.orm_models import ConversationThread
+    thread = (await db.execute(select(ConversationThread).where(ConversationThread.id == quote.session_id))).scalar_one_or_none()
+    if not thread or not (thread.user_id or thread.guest_secret_hash):
+        raise HTTPException(409, "Phiên cũ chưa có chủ sở hữu. Khách cần tạo phiên và báo giá mới.")
+    row = EligibilityVerification(session_id=quote.session_id, dealer_id=lead.dealer_id,
+                                  attribute=body.attribute, value=body.value, status="pending",
+                                  events=[{"action": "pending", "by": str(user.id), "at": utcnow().isoformat()}])
+    db.add(row)
+    await db.flush()
+    return verification_payload(row)
+
+
+@router.patch("/quotes/{quote_id}/verifications/{verification_id}")
+async def review_verification(quote_id: UUID, verification_id: UUID, body: VerificationReview,
+                              db: AsyncSession = Depends(get_db, scope="function"), user: User = Depends(sales_user)):
+    quote = await find_quote(quote_id, user, db)
+    lead = (await db.execute(select(Lead).where(Lead.id == quote.lead_id))).scalar_one()
+    await db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": "chat:" + quote.session_id})
+    row = (await db.execute(select(EligibilityVerification).where(
+        EligibilityVerification.id == verification_id, EligibilityVerification.session_id == quote.session_id,
+        EligibilityVerification.dealer_id == lead.dealer_id).with_for_update())).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Không tìm thấy hồ sơ xác minh")
+    transitions = {"pending": {"verified", "rejected"}, "verified": {"revoked"}}
+    if body.action not in transitions.get(row.status, set()):
+        raise HTTPException(409, "Chuyển trạng thái xác minh không hợp lệ")
+    if body.action == "verified":
+        existing = (await db.execute(select(EligibilityVerification).where(
+            EligibilityVerification.session_id == row.session_id, EligibilityVerification.dealer_id == row.dealer_id,
+            EligibilityVerification.attribute == row.attribute, EligibilityVerification.status == "verified"))).scalars().all()
+        if existing:
+            raise HTTPException(409, "Thu hồi xác minh đang hiệu lực trước khi xác minh hồ sơ thay thế")
+        row.verified_by, row.verified_at = user.id, utcnow()
+    row.status = body.action
+    row.evidence_ref = body.evidence_ref
+    row.events = [*(row.events or []), {"action": body.action, "by": str(user.id),
+                                      "at": utcnow().isoformat(), "evidence_ref": body.evidence_ref}]
+    return verification_payload(row)
 
 
 @router.get("/promotions")

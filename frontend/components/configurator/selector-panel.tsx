@@ -108,6 +108,8 @@ export function SelectorPanel({ configurator, onAskAI, onRequestQuote }: Props) 
               <button
                 key={opt.val}
                 onClick={() => setField("battery", opt.val)}
+                disabled={opt.val === 'rent' && !pricing.canRent}
+                title={opt.val === 'rent' && !pricing.canRent ? 'Chỉ dành cho hợp đồng thuê pin cũ đã xác minh' : undefined}
                 className={`py-3 px-3 rounded-xl border text-left transition-all ${
                   config.battery === opt.val
                     ? "border-blue-600 bg-blue-50"

@@ -2,6 +2,8 @@
 
 import { BRAND } from "@/lib/brand";
 import type { QuoteResponse } from "@/lib/api-types";
+import type { PromotionDecision } from '@/lib/catalog-api';
+import { VerificationPanel } from '@/components/configurator/verification-panel';
 
 import { useState } from "react";
 import { useStaffData, apiRequest, refreshStaffData } from "@/hooks/use-staff-data";
@@ -215,7 +217,7 @@ export default function QuotesPage() {
             </div>
 
             {/* Official PDF Download Button */}
-            <a
+            {selected.status === 'approved' && <a
               href={`/api/quotes/${selected.id}/pdf`}
               target="_blank"
               rel="noopener noreferrer"
@@ -224,7 +226,10 @@ export default function QuotesPage() {
             >
               <FileDown size={15} />
               <span>Tải bản in Báo giá PDF chính thức</span>
-            </a>
+            </a>}
+
+            <VerificationPanel key={selected.id} quoteId={selected.id}
+              decisions={(selected.priceSnapshot?.promotion_decisions ?? []) as PromotionDecision[]} />
 
 
             {/* Note */}

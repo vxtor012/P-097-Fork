@@ -257,6 +257,8 @@ function Customize() {
                 type="button"
                 aria-pressed={config.battery === "rent"}
                 onClick={() => setField("battery", "rent")}
+                disabled={!pricing.canRent}
+                title={!pricing.canRent ? 'Chỉ dành cho hợp đồng thuê pin cũ đã xác minh' : undefined}
                 className={optionClass(config.battery === "rent")}
               >
                 <span className="block font-semibold text-[#315548]">

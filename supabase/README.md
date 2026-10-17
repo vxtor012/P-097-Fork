@@ -18,8 +18,10 @@ python scripts/db/migrate_supabase.py upgrade
 python scripts/db/migrate_supabase.py check
 ```
 
-The runner reads `MIGRATION_DATABASE_URL`, falling back to `DATABASE_URL` from
-environment variables or the repository `.env`. It applies SQL in a transaction
+The read-only `check` command reads `MIGRATION_DATABASE_URL`, falling back to
+`DATABASE_URL` from environment variables or the repository `.env`. Write modes
+(`bootstrap` and `upgrade`) require `MIGRATION_DATABASE_URL` to be set explicitly;
+they never guess a migration target from the application URL. The runner applies SQL in a transaction
 and records pending versions in `supabase_migrations.schema_migrations` so the
 history is shared with Supabase's tooling. Bootstrap uses `scripts/db/schema.sql`;
 upgrade never loads `seed.sql`. Duplicate current prices abort the unique-index

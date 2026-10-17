@@ -6,6 +6,7 @@ import { VEHICLES, PROVINCES, ACCESSORIES, type Vehicle, type VehicleKey } from 
 import { fetchCatalog, fetchDealers, readApiError, type CatalogAccessory, type Province, type ServerPricing } from "@/lib/catalog-api";
 import { getQueryClient } from "@/lib/query-client";
 import type { ConfigurationUpdate } from './use-chat';
+import { ensureCustomerSession } from '@/lib/customer-session';
 
 export interface Config {
   model: VehicleKey;
@@ -48,6 +49,8 @@ function resolveSelection(
 }
 
 export function useConfigurator(initial: Partial<Config> = {}) {
+  const customerSession = useQuery({ queryKey: ['customer-session'], queryFn: ensureCustomerSession,
+    staleTime: Infinity, retry: 1 }, getQueryClient());
   const catalog = useQuery({
     queryKey: ["vehicle-catalog"], queryFn: fetchCatalog,
     staleTime: 0, refetchInterval: 30000, retry: 1,
@@ -62,7 +65,7 @@ export function useConfigurator(initial: Partial<Config> = {}) {
     const v = VEHICLES[model];
     return { model, versionId: initial.versionId ?? v.versions[0].id,
       colorId: initial.colorId ?? v.colors[0].id, provinceId: initial.provinceId ?? "HN",
-      battery: initial.battery ?? "rent", accessories: initial.accessories ?? [], dealerId: initial.dealerId ?? '' };
+      battery: initial.battery ?? "buy", accessories: initial.accessories ?? [], dealerId: initial.dealerId ?? '' };
   });
   const switchModel = (previous: Config, model: VehicleKey): Config => {
     if (!vehicles[model]) return previous;
@@ -90,11 +93,11 @@ export function useConfigurator(initial: Partial<Config> = {}) {
   const availableAccessories = accessories.filter((a) => !a.compatibleModels.length || a.compatibleModels.includes(config.model));
   const request = { model: config.model, version: version.label, color: color.label,
     province: province.label, battery: config.battery, accessories: config.accessories,
-    dealer_id: config.dealerId || null };
+    dealer_id: config.dealerId || null, session_id: customerSession.data };
   const requestKey = JSON.stringify(request);
   const serverPrice = useQuery({
     queryKey: ["configuration-price", requestKey],
-    enabled: !!catalog.data?.vehicles[config.model] && !!catalog.data?.provinces[provinceId],
+    enabled: !!customerSession.data && !!catalog.data?.vehicles[config.model] && !!catalog.data?.provinces[provinceId],
     queryFn: async ({ signal }): Promise<ServerPricing> => {
       const res = await fetch("/api/configurate", { method: "POST", signal,
         headers: { "Content-Type": "application/json" }, body: requestKey });
@@ -124,7 +127,9 @@ export function useConfigurator(initial: Partial<Config> = {}) {
     accList, accTotal, registrationFee, roadFee, inspectionFee, insuranceFee, plateFee,
     rollingTotal, promos, discount, subtotal, finalPrice: live?.final_price ?? subtotal + rollingTotal,
     color, version, province, priceVersion: live?.price_version, calculatedAt: live?.calculated_at,
-    source: authoritative ? "database" : "fallback", disclaimer: live?.disclaimer };
+    source: authoritative ? "database" : "fallback", disclaimer: live?.disclaimer,
+    pricingHash: live?.pricing_hash, promotionDecisions: live?.promotion_decisions ?? [],
+    canRent: !serverPrice.isError && live?.battery_options?.rent === true };
   const statusMessage = authoritative
     ? `Giá hiện hành · ${live?.price_version} · ${live?.calculated_at ? new Date(live.calculated_at).toLocaleString("vi-VN") : ""}`
     : catalog.isPending || serverPrice.isFetching

@@ -33,6 +33,9 @@ export async function fetchDealers({ signal }: { signal?: AbortSignal } = {}): P
 }
 
 export interface ServerPricing {
+  pricing_hash: string;
+  promotion_decisions: PromotionDecision[];
+  battery_options: { buy: boolean; rent: boolean };
   base_price: number;
   battery_cost: number;
   battery_rent: number;
@@ -46,6 +49,13 @@ export interface ServerPricing {
   calculated_at: string;
   data_source: string;
   disclaimer: string;
+}
+
+export interface PromotionDecision {
+  id: string; name: string;
+  state: 'verified_applied' | 'eligible_pending_verification' | 'ineligible' | 'data_unavailable';
+  applied_to_price: boolean;
+  verification_requirements: { attribute: string; accepted_values: string[]; document: string }[];
 }
 
 export async function fetchCatalog({ signal }: { signal?: AbortSignal } = {}): Promise<Catalog> {
@@ -66,5 +76,6 @@ export async function fetchCatalog({ signal }: { signal?: AbortSignal } = {}): P
 
 export async function readApiError(res: Response, fallback: string) {
   const data = await res.json().catch(() => ({}));
-  return typeof data.detail === "string" ? data.detail : fallback;
+  return typeof data.detail === "string" ? data.detail
+    : typeof data.detail?.message === "string" ? data.detail.message : fallback;
 }

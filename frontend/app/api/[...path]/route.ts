@@ -19,6 +19,12 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ path: str
   }
   const token = req.cookies.get("vf-session")?.value;
   if (!headers.has("authorization") && token) headers.set("authorization", `Bearer ${token}`);
+  const customerSecret = req.cookies.get("vf-chat-secret")?.value;
+  const newCustomerSecret = !token && backendPath === "chat/session" && !customerSecret
+    ? crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "")
+    : undefined;
+  const chatSecret = customerSecret ?? newCustomerSecret;
+  if (chatSecret && /^[a-f0-9]{64}$/.test(chatSecret)) headers.set("x-chat-secret", chatSecret);
   try {
     const body = ["GET", "HEAD"].includes(req.method) ? undefined : await req.text();
     const response = await fetch(`${BACKEND}/api/v1/${backendPath}${url.search}`, {
@@ -41,6 +47,11 @@ async function proxy(req: NextRequest, { params }: { params: Promise<{ path: str
     }
     responseHeaders.set("cache-control", "private, no-store");
     const result = new NextResponse(response.body, { status: response.status, headers: responseHeaders });
+    if (backendPath === "chat/session" && response.ok && newCustomerSecret) {
+      result.cookies.set("vf-chat-secret", newCustomerSecret, { httpOnly: true,
+        secure: url.protocol === "https:", sameSite: "lax", path: "/", maxAge: 180 * 86400 });
+    }
+    if (backendPath === "auth/logout" && response.ok) result.cookies.delete("vf-chat-secret");
     if ((backendPath === "auth/logout" && (response.ok || response.status === 401))
       || (backendPath === "auth/me" && response.status === 401)) result.cookies.delete("vf-session");
     return result;

@@ -5,6 +5,7 @@ import unicodedata
 
 from src.models.schemas import ConfigRequest
 from src.services.pricing import calculate_price
+from src.services.pricing_policy import PricingPolicyError
 
 
 def normalized(text):
@@ -98,13 +99,17 @@ def configuration_command(message, context, tables, now):
         battery=battery,
         accessories=accessories,
         dealer_id=context.get("dealer_id"),
+        customer_claims=tables.get("customer_claims", context.get("customer_claims", {})),
     )
     if all(
         normalized(getattr(request, field)) == normalized(context.get(field))
         for field in ("model", "version", "color", "province", "battery")
     ) and request.accessories == context.get("accessories", []):
         return None
-    price = calculate_price(request, tables, now)
+    try:
+        price = calculate_price(request, tables, now)
+    except PricingPolicyError as error:
+        return {"response": error.detail["message"]}
     amount = f"{price['final_price']:,}".replace(",", ".")
     return {
         "response": f"Cấu hình được xác nhận: {model} {version}, {color}, đăng ký tại {province}, "

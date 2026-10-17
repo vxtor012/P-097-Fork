@@ -17,9 +17,15 @@ export async function POST(req: NextRequest) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
+    const headers = new Headers({ "Content-Type": "application/json" });
+    const secret = req.cookies.get("vf-chat-secret")?.value;
+    if (secret) headers.set("x-chat-secret", secret);
+    const token = req.cookies.get("vf-session")?.value;
+    const authorization = req.headers.get("authorization") || (token ? `Bearer ${token}` : null);
+    if (authorization) headers.set("authorization", authorization);
     const res = await fetch(`${BACKEND.replace(/\/$/, "")}/api/v1/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: controller.signal,
       cache: "no-store",

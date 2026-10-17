@@ -16,6 +16,12 @@ async def test_chat_empty_message(client):
 
 
 @pytest.mark.asyncio
+async def test_chat_history_requires_ownership_secret(client):
+    response = await client.get("/api/v1/chat/history", params={"session_id": "68b3b8c2-6e21-4c3f-b070-e7ae05c6b6fe"})
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
     from contextlib import nullcontext
 
@@ -36,7 +42,7 @@ async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
             return {"answer": "Giá theo catalog là 699 triệu đồng."}
 
     monkeypatch.setattr(routes, "agent", FakeAgent())
-    monkeypatch.setattr(routes, "dataset_scope", nullcontext)
+    monkeypatch.setattr(routes, "dataset_scope", lambda tables=None: nullcontext())
     response = await client.post(
         "/api/v1/chat",
         json={
@@ -50,7 +56,7 @@ async def test_chat_returns_agent_answer_and_session(client, monkeypatch):
                 "battery": "rent",
                 "accessories": [],
             },
-        },
+        }, headers={"X-Chat-Secret": "a" * 64},
     )
 
     assert response.status_code == 200
@@ -70,7 +76,7 @@ async def test_chat_database_error_is_redacted(client, monkeypatch):
         raise RuntimeError("postgresql://private-password@private-host")
 
     monkeypatch.setattr(routes, "_invoke_agent", unavailable)
-    response = await client.post("/api/v1/chat", json={"message": "Giá xe?"})
+    response = await client.post("/api/v1/chat", json={"message": "Giá xe?"}, headers={"X-Chat-Secret": "b" * 64})
     assert response.status_code == 503
     assert "private-password" not in response.text
 

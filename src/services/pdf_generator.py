@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from html import escape
 from typing import Any
+from src.services.pricing_policy import PromotionState
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -442,10 +443,20 @@ def generate_quote_pdf(quote_data: dict[str, Any]) -> bytes:
     story.append(Spacer(1, 10))
 
     # ── 6. Warranty & Commitment Notes ──────────────────────────
+    for decision in quote_data.get("price_snapshot", {}).get("promotion_decisions", []):
+        if decision["state"] == PromotionState.eligible_pending_verification:
+            docs = "; ".join(r["document"] for r in decision["verification_requirements"])
+            story.append(Paragraph(f"{decision['name']}: chưa trừ tiền. Cần xác minh: {docs}.", style_meta))
+        elif decision["state"] == PromotionState.data_unavailable:
+            story.append(Paragraph(f"{decision['name']}: chưa đủ dữ liệu điều kiện, chưa áp dụng.", style_meta))
+    digest = quote_data.get("price_snapshot", {}).get("pricing_hash")
+    if digest:
+        story.append(Paragraph(f"Pricing hash: {digest}", style_meta))
     notes = [
         "<b>LƯU Ý VỀ BẢNG DỰ TOÁN:</b>",
         "• Giá và ưu đãi phản ánh dữ liệu tại thời điểm lập; đại lý xác nhận điều kiện trước khi giao dịch.",
-        "• Phí thuê pin định kỳ không nằm trong tổng chi phí mua xe.",
+        "• Phí thuê pin định kỳ không nằm trong tổng chi phí mua xe."
+        if quote_data.get("battery") == "rent" else "• Dự toán chỉ có giá trị tham khảo; báo giá chính thức cần tư vấn viên duyệt.",
         "• Chính sách bảo hành, giao xe và các khoản phí khác cần được đại lý xác nhận riêng.",
     ]
     if seller_note:

@@ -7,6 +7,9 @@ from langchain_core.tools import tool
 
 from src.agents.graph import (
     CONTACT_MESSAGE,
+    _canonicalize_tool_calls,
+    _comparison_queries,
+    _intent_prefetch,
     _is_clarification,
     _is_repeat_call,
     _is_stall,
@@ -139,6 +142,130 @@ def test_prefilter_normalizes_nfd_question():
     assert prefilter({"question": nfd})["question"] == "Giá VF 6 bao nhiêu?"
 
 
+def test_budget_only_question_is_deterministically_clarified():
+    result = prefilter({"question": "Tư vấn giúp mình xe phù hợp nhất, ngân sách khoảng 700 triệu."})
+    assert result["error"] == "clarification_required"
+    assert "số chỗ" in result["response"]
+
+
+def test_budget_question_with_model_is_not_blocked():
+    result = prefilter({"question": "VF 6 giá khoảng 700 triệu có phù hợp không?"})
+    assert result.get("error") is None
+
+
+def test_comparison_queries_are_batched():
+    assert _comparison_queries("VF 8 Eco và VF 8 Plus có màu nào khác nhau?") == ["VF 8 Eco", "VF 8 Plus"]
+
+
+def test_comparison_prefetch_uses_catalog_for_cross_model_colors():
+    result = _intent_prefetch(
+        "So sánh VF 5 Plus với VF 6 Plus về giá và màu ngoại thất.",
+        [],
+        1,
+        {"search_vehicles", "lookup_car_color_options"},
+    )
+    assert result.tool_calls[0]["name"] == "search_vehicles"
+    assert result.tool_calls[0]["args"] == {
+        "vehicle_queries": ["VF 5 Plus", "VF 6 Plus"],
+        "fields": ["price", "colors"],
+    }
+
+
+def test_comparison_with_technical_requirements_is_not_reduced_to_prices():
+    assert _intent_prefetch("So sánh VF 5 và VF 6 về giá và pin", [], 1, {"search_vehicles"}) is None
+
+
+def test_mixed_brand_request_has_priority_over_budget_clarification():
+    result = prefilter({"question": "So sánh xe VinFast với Toyota, ngân sách 700 triệu"})
+    assert result["error"] == "out_of_scope"
+
+
+@pytest.mark.asyncio
+async def test_budget_clarification_skips_llm_and_resumes_with_criteria(monkeypatch):
+    fake = FakeChatModel([AIMessage(content="Bạn muốn xem danh sách xe phù hợp không?")])
+    monkeypatch.setattr("src.agents.graph.get_llm", lambda: fake)
+    graph = build_graph(tools=[])
+    config = {"configurable": {"thread_id": "budget-slot"}}
+    first = await graph.ainvoke({"query": "Tư vấn xe ngân sách khoảng 700 triệu"}, config)
+    assert first["error"] == "clarification_required"
+    assert not fake.prompts
+    second = await graph.ainvoke({"question": "5 chỗ đi phố"}, config)
+    assert second["error"] is None
+    assert second["profile"]["recommendation_slot"] is None
+    assert "700" in second["question"]
+    assert len(fake.prompts) == 1
+
+
+def test_compact_colors_omit_images_without_changing_catalog():
+    compact = json.loads(vt.search_vehicles.invoke({"vehicle_queries": ["VF 6"], "fields": ["colors"]}))
+    full = json.loads(vt.search_vehicles.invoke({"vehicle_queries": ["VF 6"], "fields": ["colors"], "include_images": True}))
+    assert compact["matched_versions"]
+    assert all("image_url" not in color for row in compact["matched_versions"] for color in row["exterior_colors"])
+    assert any("image_url" in color for row in full["matched_versions"] for color in row["exterior_colors"])
+
+
+def test_budget_shortlist_is_bounded_without_truncating_explicit_lookups():
+    result = json.loads(vt.search_vehicles.invoke({"budget_million": 3000, "fields": ["price"]}))
+    assert 0 < len(result["matched_versions"]) <= 3
+    names = [row["name"] for row in result["matched_versions"]]
+    assert len(names) == len(set(names))
+    assert all(row["price_vnd"] <= 3_000_000_000 for row in result["matched_versions"])
+
+
+def test_pricing_tool_call_is_canonicalized():
+    response = _canonicalize_tool_calls(AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "price_vehicle_configuration",
+            "args": {"model": "VF 6 Plus", "version": "Plus"},
+            "id": "price-1",
+        }],
+    ))
+    assert response.tool_calls[0]["args"]["model"] == "VF 6"
+    assert response.tool_calls[0]["args"]["version"] == "Plus"
+    assert response.response_metadata["raw_tool_calls"][0]["args"]["model"] == "VF 6 Plus"
+
+
+@pytest.mark.asyncio
+async def test_out_of_scope_brand_is_rejected_before_model_or_tools(monkeypatch):
+    fake = FakeChatModel([AIMessage(content="không nên được gọi")])
+    monkeypatch.setattr("src.agents.graph.get_llm", lambda: fake)
+    result = await build_graph(tools=[]).ainvoke(
+        {"query": "Báo giá Toyota Vios bản G"}, {"configurable": {"thread_id": "scope"}}
+    )
+    assert not fake.prompts
+    assert "VinFast" in result["response"]
+
+
+def test_high_risk_intents_are_deterministically_prefetched():
+    tools = {"search_gold_knowledge", "get_eligible_promotions", "lookup_province_fees"}
+    accessory = _intent_prefetch("VF 6 có phụ kiện gì?", [HumanMessage(content="VF 6 có phụ kiện gì?")], 1, tools)
+    assert accessory.tool_calls[0]["name"] == "search_gold_knowledge"
+    road = _intent_prefetch("phi duong bo cua VF 6 o HN?", [HumanMessage(content="phi duong bo cua VF 6 o HN?")], 1, tools)
+    assert road.tool_calls[0]["name"] == "search_gold_knowledge"
+    registration = _intent_prefetch(
+        "Phí đăng ký và biển số ô tô tại Hà Nội là bao nhiêu?",
+        [HumanMessage(content="Phí đăng ký và biển số ô tô tại Hà Nội là bao nhiêu?")],
+        1,
+        tools,
+    )
+    assert registration.tool_calls[0]["name"] == "lookup_province_fees"
+    assert registration.tool_calls[0]["args"] == {"province": "Hà Nội"}
+    expired = _intent_prefetch(
+        "Sau ngày 31/10/2026, VinClub Special còn áp dụng không?",
+        [HumanMessage(content="Sau ngày 31/10/2026, VinClub Special còn áp dụng không?")],
+        1,
+        tools,
+    )
+    assert expired.tool_calls[0]["name"] == "get_eligible_promotions"
+    assert expired.tool_calls[0]["args"]["evaluation_date"] == "2026-11-01"
+    rent = _intent_prefetch("Thuê pin VF 8 còn đăng ký mới được không?", [], 1, tools)
+    assert rent.tool_calls[0]["name"] == "search_gold_knowledge"
+    assert _intent_prefetch(
+        "Tính giá lăn bánh VF 6 Plus ở Hà Nội, pin mua, không phụ kiện.", [], 1, tools
+    ) is None
+
+
 # ---------- tools ----------
 
 
@@ -153,6 +280,51 @@ def test_resolve_is_precise():
 def test_resolve_unknown_edition_is_reported():
     found, unmatched = vt._resolve(["VF 6 Ultra"])
     assert found and unmatched
+
+
+def test_price_configuration_resolves_model_trim_alias(monkeypatch):
+    vehicle = {
+        "model_name": "VF 6",
+        "edition": "Plus",
+        "colors": [{"color": "white", "color_name_vi": "Trắng Tinh Khôi"}],
+    }
+
+    def resolve(queries):
+        if queries == ["VF 6 Plus Plus"]:
+            return [], ["VF 6 Plus Plus"]
+        if queries == ["VF 6 Plus"]:
+            return [vehicle], []
+        return [], list(queries)
+
+    monkeypatch.setattr(vt, "_resolve", resolve)
+    monkeypatch.setattr(vt, "_provinces", lambda: [{
+        "province_name": "Hà Nội",
+        "zone": "I",
+        "car_registration_fee_pct": "0.12",
+        "car_license_plate_fee_vnd": "20_000_000",
+    }])
+    monkeypatch.setattr(vt.operational_data, "price_configuration", lambda request: {
+        "pricing_hash": "test-hash",
+        "final_price": 300_000_000,
+        "base_price": 300_000_000,
+        "battery_cost": 0,
+        "accessories": [],
+        "rolling_costs": {},
+        "promotions": [],
+        "disclaimer": "test",
+    })
+    result = vt.price_vehicle_configuration.func.__wrapped__(
+        model="VF 6 Plus",
+        version="Plus",
+        color="Trắng Tinh Khôi",
+        province="Hà Nội",
+        battery="buy",
+        accessories=[],
+    )
+    result = json.loads(result)
+
+    assert result["configuration"]["model"] == "VF 6"
+    assert result["configuration"]["version"] == "Plus"
 
 
 def test_colors_join_variant_trim_codes():
@@ -186,6 +358,29 @@ def test_province_aliases():
     assert json.loads(vt.lookup_province_fees.invoke({"province": "Huế"}))["fees"]["province"] == "Thừa Thiên Huế"
     unknown = json.loads(vt.lookup_province_fees.invoke({"province": "Atlantis"}))
     assert "error" in unknown and unknown["valid_candidates"]
+
+
+def test_authoritative_fee_reply_renders_car_fees():
+    from src.agents.graph import _authoritative_reply
+
+    answer, profile = _authoritative_reply([
+        ToolMessage(content=json.dumps({
+            "fees": {
+                "province": "Hà Nội",
+                "car_registration_fee_percent": 12.0,
+                "car_license_plate_fee_vnd": 20_000_000,
+            },
+            "car_estimates": [{
+                "vehicle": "VF 6 Plus",
+                "estimated_province_fees_vnd": 104_000_000,
+            }],
+        }, ensure_ascii=False), tool_call_id="fees-1")
+    ])
+    assert "Hà Nội" in answer
+    assert "12.0%" in answer
+    assert "20.000.000 đồng" in answer
+    assert "VF 6 Plus" in answer
+    assert profile is None
 
 
 def test_tco_requires_years_and_known_location():

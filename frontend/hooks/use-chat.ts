@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { ensureCustomerSession } from "@/lib/customer-session";
 
 export interface ChatMessage {
   id: string;
@@ -28,27 +29,16 @@ function makeId() {
   return Math.random().toString(36).slice(2, 11);
 }
 
-function getSessionId() {
-  if (typeof window === "undefined") return makeId();
-  const k = "vf_session";
-  const v = sessionStorage.getItem(k);
-  if (v && /^[0-9a-f-]{36}$/i.test(v)) return v;
-  const id = crypto.randomUUID();
-  sessionStorage.setItem(k, id);
-  return id;
-}
-
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const pending = useRef(false);
   useEffect(() => {
-    const id = getSessionId();
-    if (!/^[0-9a-f-]{36}$/i.test(id)) return;
     const controller = new AbortController();
 
     async function loadHistory() {
       try {
+        const id = await ensureCustomerSession();
         const res = await fetch("/api/chat/history?session_id=" + encodeURIComponent(id), {
           signal: controller.signal,
           cache: "no-store",
@@ -97,7 +87,7 @@ export function useChat() {
     ]);
 
     try {
-      const sessionId = getSessionId();
+      const sessionId = await ensureCustomerSession();
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
