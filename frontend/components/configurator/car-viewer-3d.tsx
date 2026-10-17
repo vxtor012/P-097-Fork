@@ -190,6 +190,7 @@ function CarViewerContent({
   useEffect(() => {
     if (controlsRef.current) {
       controlsRef.current.autoRotate = autoRotate;
+      controlsRef.current.dispatchEvent({ type: "change" });
     }
   }, [autoRotate]);
 
@@ -226,12 +227,15 @@ function CarViewerContent({
       return;
     }
     renderer.setClearColor(0x000000, 0); // Trong suốt tuyệt đối
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // Cap the backing buffer: 2x device pixel ratio makes a car viewer render
+    // up to 4x as many pixels for little visible gain on this surface.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setSize(width, height);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.25; // Tăng sáng một chút ít, giúp xe sáng rõ, nổi khối bóng bẩy
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    // The baked/fake ground shadow below gives the same visual cue at a much
+    // lower cost than a 1024px shadow map evaluated for every frame.
+    renderer.shadowMap.enabled = false;
 
     container.replaceChildren(renderer.domElement);
 
@@ -258,10 +262,6 @@ function CarViewerContent({
     // Key Light rọi chéo trước bên trái (ánh sáng chính tạo khối xe)
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
     keyLight.position.set(6, 8, 6);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
-    keyLight.shadow.bias = -0.0004;
     scene.add(keyLight);
 
     // Fill Light làm mềm bóng phía sau bên phải
@@ -394,8 +394,8 @@ function CarViewerContent({
         gltf.scene.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
-            mesh.castShadow = true;
-            mesh.receiveShadow = true;
+            mesh.castShadow = false;
+            mesh.receiveShadow = false;
 
             const matList = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
             matList.forEach((rawMat) => {
@@ -524,14 +524,21 @@ function CarViewerContent({
       }
     );
 
-    // 8. Animation Loop
-    let animId: number;
-    const animate = () => {
-      animId = requestAnimationFrame(animate);
-      controls.update();
+    // 8. Demand-driven rendering. A continuous loop wastes GPU time while
+    // the viewer is idle; controls/auto-rotate schedule frames as needed.
+    let animId: number | null = null;
+    const renderFrame = () => {
+      animId = null;
+      const isMoving = controls.update();
       renderer.render(scene, camera);
+      if (controls.autoRotate || isMoving) scheduleRender();
     };
-    animate();
+    const scheduleRender = () => {
+      if (animId !== null) return;
+      animId = requestAnimationFrame(renderFrame);
+    };
+    controls.addEventListener("change", scheduleRender);
+    scheduleRender();
 
     // 9. Resize Observer: Cập nhật kích thước renderer full 100% và fit lại khoảng cách camera
     const handleResize = () => {
@@ -542,6 +549,7 @@ function CarViewerContent({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      scheduleRender();
 
       if (modelScene) {
         fitCameraToModel(modelRadiusRef.current, defaultTarget.current);
@@ -552,7 +560,8 @@ function CarViewerContent({
     return () => {
       isDisposed = true;
       window.removeEventListener("resize", handleResize);
-      cancelAnimationFrame(animId);
+      controls.removeEventListener("change", scheduleRender);
+      if (animId !== null) cancelAnimationFrame(animId);
 
       controls.dispose();
       dracoLoader.dispose();

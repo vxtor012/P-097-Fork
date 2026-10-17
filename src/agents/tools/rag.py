@@ -24,8 +24,15 @@ def _embedding_client(model=EMBEDDING_MODEL):
     return OpenAIEmbeddings(model=model, api_key=settings.openai_api_key)
 
 
+@lru_cache(maxsize=128)
+def _cached_embedding(model: str, query: str) -> tuple[float, ...]:
+    # Exceptions are not cached, so a transient OpenAI failure is retried on the next call.
+    return tuple(_embedding_client(model).embed_query(query))
+
+
 def _embed_query(query: str) -> list[float]:
-    return _embedding_client(ai_data.active_dataset()["embedding_model"]).embed_query(query)
+    model = ai_data.active_dataset()["embedding_model"]
+    return list(_cached_embedding(model, " ".join((query or "").split())))
 
 
 def _retrieve(query_vector: list[float], top_k: int = 5, category: str | None = None) -> list[dict[str, Any]]:

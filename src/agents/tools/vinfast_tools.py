@@ -4,6 +4,7 @@ import json
 import re
 import unicodedata
 from datetime import UTC, date, datetime
+from functools import lru_cache
 from typing import Literal
 
 from fastapi import HTTPException
@@ -15,6 +16,7 @@ from src.models.schemas import ConfigRequest
 from src.services.installment import estimate_installment
 
 
+@lru_cache(maxsize=4096)
 def _normalize(text: str | None) -> str:
     text = unicodedata.normalize("NFKD", (text or "").replace("đ", "d").replace("Đ", "D"))
     value = "".join(char for char in text if not unicodedata.combining(char))
