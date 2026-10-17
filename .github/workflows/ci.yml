@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "fix/**"]
   pull_request:
     branches: [main]
 
@@ -57,6 +57,46 @@ jobs:
 
       - name: Run unit and PostgreSQL integration tests
         run: pytest tests/ -v --tb=short
+
+      - name: Build production image with embedded Zalo runtime
+        run: docker build -t autoquote-production-ci .
+
+      - name: Smoke test production startup without new Zalo settings
+        run: |
+          docker run -d --name autoquote-production-ci --network host \
+            -e APP_ENV=production -e JWT_SECRET -e DATABASE_URL -e OPENAI_API_KEY \
+            -e PORT=18000 autoquote-production-ci
+          trap 'docker logs autoquote-production-ci; docker stop -t 25 autoquote-production-ci' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:18000/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18000/health
+          docker exec autoquote-production-ci python -c '
+          import json, os, sys
+          from urllib.request import Request, urlopen
+          sys.path.insert(0, "/app/scripts")
+          from start_services import embedded_environment
+          env, embedded = embedded_environment(os.environ)
+          assert embedded
+          request = Request(env["ZALO_BRIDGE_URL"] + "/accounts/00000000-0000-0000-0000-000000000000", headers={"Authorization": "Bearer " + env["ZALO_BRIDGE_TOKEN"]})
+          with urlopen(request) as response:
+              assert json.load(response)["status"] == "disconnected"
+          print("Production API and private Zalo bridge are ready; no QR or messages created.")'
+
+  zalo-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: zalo-bridge/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: zalo-bridge
+      - run: npm test
+        working-directory: zalo-bridge
 
   frontend:
     runs-on: ubuntu-latest

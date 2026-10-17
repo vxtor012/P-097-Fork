@@ -46,6 +46,28 @@ khôi phục phiên. Launcher không sao chép phiên đăng nhập giữa các 
 
 ## Triển khai máy chủ
 
+### Render dùng Dockerfile gốc
+
+Image backend bao gồm Node 24, bridge riêng trên `127.0.0.1:8010` và worker.
+Lệnh khởi chạy quản lý cả ba tiến trình; chỉ API nhận cổng public `$PORT`.
+Với cấu hình Render hiện có, không cần tạo thêm dịch vụ hoặc nhập thêm biến:
+nếu thiếu khóa Zalo nội bộ, runtime dùng HMAC-SHA256 từ `JWT_SECRET` đã có với
+hai ngữ cảnh riêng cho token bridge và mã hóa phiên. Giá trị chỉ truyền trong
+môi trường tiến trình, không ghi vào Git/file/log. Giá trị Zalo đã khai báo được
+ưu tiên; URL bridge bên ngoài giữ luồng triển khai dịch vụ riêng bên dưới.
+
+Giữ `JWT_SECRET` ổn định nếu đang dùng khóa mặc định; đổi nó sẽ yêu cầu đăng nhập
+Zalo lại. Thư mục phiên cũ luôn cần khóa mã hóa gốc, không tự thay thế bằng khóa
+mặc định. Bridge không được mở cổng public và không khởi động theo từng request.
+
+Render free dùng filesystem tạm: phiên Zalo và nhật ký SQLite có thể mất khi
+service restart, redeploy hoặc ngừng do không hoạt động. Cần quét QR lại khi mất
+phiên. Lượt gửi đang xử lý mà mất nhật ký được giữ để đối soát, không tự gửi lại.
+Đường dẫn `ZALO_DATA_DIR` trên ổ lưu trữ bền vững hiện có sẽ được sử dụng nếu đã
+khai báo; bản sửa này không tự tạo ổ đĩa hay thay đổi gói dịch vụ.
+
+### Bridge và worker chạy riêng
+
 Backend và worker dùng PostgreSQL chung; Node bridge dùng `zca-js@2.1.2` và một
 volume SQLite nội bộ để lưu phiên mã hóa cùng nhật ký chống gửi trùng. Không cần
 Electron hoặc Deplao trên máy người sử dụng.
