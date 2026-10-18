@@ -1,10 +1,13 @@
 """Deterministic VinFast catalog, ownership-cost, and promotion tools."""
 
+import csv
 import json
+import os
 import re
 import unicodedata
 from datetime import date, datetime
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from fastapi import HTTPException
@@ -15,6 +18,8 @@ from src.agents.tools.rag import search_gold_knowledge
 from src.models.schemas import ConfigRequest
 from src.services.installment import estimate_installment
 from src.services.pricing_policy import tool_error
+
+TRIM_ALIASES_PATH = Path(__file__).with_name("trim_aliases.snapshot.json")
 
 
 @lru_cache(maxsize=4096)
@@ -45,7 +50,10 @@ def _format_vnd(amount: int | float) -> str:
 
 VinclubTier = Literal["platinum", "gold", "diamond", "member"]
 CustomerGroup = Literal["public_security_military", "green_switch"]
-VehicleField = Literal["overview", "price", "colors", "performance", "battery_charging", "dimensions", "other_specs"]
+VehicleField = Literal[
+    "overview", "price", "colors", "performance", "battery_charging", "dimensions", "other_specs",
+    "specifications",
+]
 SPEC_FIELDS = {"performance", "battery_charging", "dimensions", "other_specs"}
 PROVINCE_ALIASES = {
     "saigon": "hochiminh",
@@ -202,10 +210,87 @@ def _load_data() -> tuple[list[dict], list[dict], list[dict] | None]:
                 "unavailable_colors": off_colors,
             }
         )
+    # Validate at snapshot load, not only after a failed user request. A renamed
+    # catalog trim must force a deliberate alias-snapshot update.
+    _validated_trim_aliases(catalog)
     return catalog, rolling_rows, _load_promotions()
 
 
 FILLER_RE = re.compile(r"\b(vinfast|phiên bản|phien ban|bản|ban|version)\b", re.I)
+
+
+@lru_cache(maxsize=1)
+def _trim_alias_config() -> dict:
+    """Read the versioned alias contract that travels with the catalog snapshot."""
+    try:
+        config = json.loads(TRIM_ALIASES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Không đọc được trim alias snapshot: {exc}") from exc
+    if not isinstance(config.get("version"), str) or not isinstance(config.get("aliases"), list):
+        raise RuntimeError("trim alias snapshot phải có version và aliases hợp lệ")
+    return config
+
+
+def _validated_trim_aliases(catalog: list[dict]) -> list[dict]:
+    """Fail fast if a snapshot alias points to a trim absent from its active catalog."""
+    config = _trim_alias_config()
+    by_model: dict[str, set[str]] = {}
+    for vehicle in catalog:
+        model_key = _normalize(vehicle["model_name"])
+        by_model.setdefault(model_key, set()).add(_normalize(vehicle["edition"]).removeprefix(model_key))
+    validated = []
+    for rule in config["aliases"]:
+        if not isinstance(rule, dict) or not isinstance(rule.get("targets"), list):
+            raise RuntimeError("trim alias snapshot có rule không hợp lệ")
+        inputs, models = rule.get("inputs"), rule.get("models")
+        targets = rule["targets"]
+        if (not isinstance(inputs, list) or not inputs or not isinstance(models, list) or not models
+                or not targets or not all(isinstance(target, str) for target in targets)):
+            raise RuntimeError("trim alias rule phải có models, inputs và targets")
+        for model in models:
+            model_key = _normalize(model)
+            # Exactly one label must exist for the current snapshot. A discontinued
+            # model has no active trim to resolve and is deliberately ignored.
+            current_targets = [target for target in targets if _normalize(target) in by_model.get(model_key, set())]
+            if model_key in by_model and len(current_targets) != 1:
+                raise RuntimeError(
+                    f"trim alias {inputs!r} phải có đúng một target trong catalog hiện hành của {model}; có {current_targets!r}"
+                )
+        validated.append({**rule, "_inputs": {_normalize(value) for value in inputs}, "_models": {_normalize(value) for value in models}})
+    return validated
+
+
+def _trim_alias(model: str, requested_trim: str, catalog: list[dict]) -> dict | None:
+    model_key, trim_key = _normalize(model), _normalize(requested_trim)
+    if not trim_key:
+        return None
+    # Do not validate an alias rule for ordinary trims (for example Plus). This
+    # keeps deliberately small unit-test fixtures usable while an actual alias
+    # request still validates the active catalog before being resolved.
+    configured = [
+        rule for rule in _trim_alias_config()["aliases"]
+        if isinstance(rule, dict)
+        and model_key in {_normalize(value) for value in rule.get("models", [])}
+        and trim_key in {_normalize(value) for value in rule.get("inputs", [])}
+    ]
+    if not configured:
+        return None
+    for rule in _validated_trim_aliases(catalog):
+        if model_key in rule["_models"] and trim_key in rule["_inputs"]:
+            target = next(
+                target for target in rule["targets"]
+                if _normalize(target) in {
+                    _normalize(vehicle["edition"]).removeprefix(model_key)
+                    for vehicle in catalog if _normalize(vehicle["model_name"]) == model_key
+                }
+            )
+            return {
+                "requested_version": requested_trim,
+                "resolved_version": target,
+                "alias_version": _trim_alias_config()["version"],
+                "user_note": rule.get("user_note", "") if _normalize(target) != trim_key else "",
+            }
+    return None
 
 
 def _resolve(queries: list[str] | None) -> tuple[list[dict], list[str]]:
@@ -220,12 +305,26 @@ def _resolve(queries: list[str] | None) -> tuple[list[dict], list[str]]:
         found: list[dict] = []
         if term:
             # Tách tên dòng xe khỏi phần phiên bản: "VF 6 Plus" -> model "vf6" + "plus".
-            for vehicle in catalog:
-                model = _normalize(vehicle["model_name"])
-                if model and model in term:
-                    rest = term.replace(model, "", 1)
-                    if not rest or rest in _normalize(vehicle["edition"]).replace(model, "", 1):
-                        found.append(vehicle)
+            # Resolve an alias only after identifying a model. Unknown trims retain
+            # the existing explicit-unmatched behavior instead of becoming fuzzy matches.
+            model_keys = {_normalize(v["model_name"]) for v in catalog if _normalize(v["model_name"]) in term}
+            for model_key in model_keys:
+                model_name = next(v["model_name"] for v in catalog if _normalize(v["model_name"]) == model_key)
+                rest = term.replace(model_key, "", 1)
+                # The live catalog may store ``VF6`` while customers normally
+                # write ``VF 6``. Split alpha/numeric components so both raw
+                # spellings leave the requested trim (for example, ``Eco``).
+                model_parts = re.findall(r"[A-Za-z]+|\d+", model_name)
+                model_pattern = r"\s*".join(re.escape(part) for part in model_parts)
+                requested_trim = re.sub(model_pattern, "", cleaned, count=1, flags=re.I).strip() or rest
+                alias = _trim_alias(model_name, requested_trim, catalog)
+                expected_trim = _normalize(alias["resolved_version"]) if alias else rest
+                for vehicle in catalog:
+                    if _normalize(vehicle["model_name"]) != model_key:
+                        continue
+                    edition = _normalize(vehicle["edition"]).removeprefix(model_key)
+                    if not expected_trim or expected_trim == edition:
+                        found.append({**vehicle, "_trim_resolution": alias} if alias else vehicle)
             if not found:
                 found = [v for v in catalog if term in _normalize(v["model_name"] + " " + v["edition"])]
         if not found:
@@ -241,6 +340,47 @@ def _resolve(queries: list[str] | None) -> tuple[list[dict], list[str]]:
     return results, unmatched
 
 
+def _trim_specifications(model_name: str, edition: str) -> list[dict]:
+    """Return the canonical technical snapshot for a catalog trim.
+
+    Option-package names in the pricing feed are intentionally mapped to the
+    corresponding technical trim. An empty result means the snapshot does not
+    cover that trim; callers must not infer missing equipment.
+    """
+    try:
+        grouped = _load_vehicle_specs().get(model_name)
+        if grouped is None:
+            grouped = next(
+                (rows for name, rows in _load_vehicle_specs().items() if _normalize(name) == _normalize(model_name)),
+                None,
+            )
+        if not grouped:
+            return []
+        normalized = _normalize(edition)
+        if "2dongco" in normalized or "awd" in normalized:
+            target = next((name for name in grouped if "awd" in _normalize(name)), None)
+        elif "eco" in normalized or "tieuchuan" in normalized:
+            # The live configurator calls the entry "Tiêu chuẩn", while the
+            # technical snapshot uses VinFast's "Eco" name for that same base trim.
+            target = next((name for name in grouped if _normalize(name) == "eco"), None)
+        elif "plus" in normalized:
+            target = next((name for name in grouped if _normalize(name) == "plus"), None)
+        else:
+            target = None
+        if not target:
+            return []
+        return [
+            {
+                "category": row.get("category", ""),
+                "label": row.get("spec_label", ""),
+                "value": row.get("spec_value", ""),
+            }
+            for row in grouped[target]
+        ]
+    except (KeyError, TypeError):
+        return []
+
+
 @tool
 @operational_data.pinned
 def search_vehicles(
@@ -253,12 +393,15 @@ def search_vehicles(
 ) -> str:
     """Look up VinFast car trims, official catalog prices and available exterior colors.
 
-    The structured catalog has NO data for seats, segment or technical specs (performance,
-    battery_charging, dimensions, other_specs); use search_gold_knowledge for those.
+    The structured catalog has NO data for seats, segment or the legacy technical fields
+    (performance, battery_charging, dimensions, other_specs); use search_gold_knowledge for those.
+    ``specifications`` is the compact, trim-level specification snapshot used when comparing
+    all versions of one model.
 
     Args:
         vehicle_queries: Car names or trims to look up, e.g. ["VF 6 Plus"].
-        fields: Requested fields: overview, price, colors (performance, battery_charging, dimensions, other_specs are not available here).
+        fields: Requested fields: overview, price, colors, specifications
+            (performance, battery_charging, dimensions, other_specs are not available here).
         seats: Not supported by the catalog yet; ignored with a note.
         budget_million: Maximum listed price, in million VND.
         segment: Not supported by the catalog yet; ignored with a note.
@@ -268,6 +411,10 @@ def search_vehicles(
     vehicles, unmatched = _resolve(vehicle_queries)
     fields = fields or ["overview", "price"]
     notes = [f"Không tìm thấy xe: {q}" for q in unmatched]
+    for vehicle in vehicles:
+        resolution = vehicle.get("_trim_resolution")
+        if resolution and resolution.get("user_note"):
+            notes.append(resolution["user_note"])
     missing = [name for name, value in (("seats", seats), ("segment", segment)) if value not in (None, "")]
     missing += [name for name in fields if name in SPEC_FIELDS]
     if missing:
@@ -304,6 +451,8 @@ def search_vehicles(
     output = []
     for vehicle in vehicles:
         record = {"name": vehicle["name"], "edition": vehicle["edition"]}
+        if vehicle.get("_trim_resolution"):
+            record["trim_resolution"] = vehicle["_trim_resolution"]
         if "overview" in fields:
             record.update(segment=vehicle["segment"], seats=vehicle["seats"])
         if "price" in fields:
@@ -328,6 +477,16 @@ def search_vehicles(
                         else "catalog không có dữ liệu màu, không kết luận xe không có màu."
                     )
                 )
+        if "specifications" in fields:
+            # Specification snapshots use canonical trims (Eco, Plus, Plus AWD), while
+            # the price catalog also contains option packages. Resolve those packages to
+            # the closest canonical trim without inventing values for unknown variants.
+            specs = _trim_specifications(vehicle["model_name"], vehicle["edition"])
+            record["specifications"] = specs
+            if not specs:
+                notes.append(
+                    f"{vehicle['name']} {vehicle['edition']}: chưa có snapshot thông số kỹ thuật theo phiên bản."
+                )
         output.append(record)
 
     return json.dumps(
@@ -342,7 +501,7 @@ def search_vehicles(
 
 @tool
 @operational_data.pinned
-def lookup_car_color_options(vehicle_queries: list[str], include_images: bool = False) -> str:
+def lookup_car_color_options(vehicle_queries: list[str], include_images: bool = True) -> str:
     """Look up exterior colors and color surcharges for VinFast trims.
 
     color_options lists colors currently marked available; unavailable_color_options lists colors the
@@ -350,7 +509,7 @@ def lookup_car_color_options(vehicle_queries: list[str], include_images: bool = 
 
     Args:
         vehicle_queries: Car models or trims to look up, e.g. ["VF 3", "VF 6 Plus"].
-        include_images: Include catalog image URLs only when the caller needs images. Defaults to false for compact agent responses.
+        include_images: Include catalog image URLs. Defaults to true because color discovery is a visual selection flow.
     """
     vehicles, unmatched = _resolve(vehicle_queries)
     available, unavailable = [], []
@@ -543,6 +702,7 @@ def get_eligible_promotions(
     province: str | None = None,
     dealer_id: str | None = None,
     evaluation_date: str | None = None,
+    promotion_name: str | None = None,
 ) -> str:
     """Check current VinFast promotions and calculate explicit cash discounts when eligible.
 
@@ -553,6 +713,8 @@ def get_eligible_promotions(
         purchase_channel: Sales channel the user stated, such as O2O. Leave null if unknown.
         province: Province stated by the user, required for provincial promotions.
         evaluation_date: Optional ISO date (YYYY-MM-DD) for a reproducible eligibility check; defaults to today.
+        promotion_name: Tên ưu đãi cụ thể cần tra cứu hiệu lực (kể cả khi đã hết hạn),
+            ví dụ "VinClub Special". Dùng cho câu hỏi "X còn áp dụng sau <ngày> không?".
     """
     try:
         as_of = date.fromisoformat(evaluation_date) if evaluation_date else date.today()
@@ -565,8 +727,16 @@ def get_eligible_promotions(
                            "purchase_channel": purchase_channel}.items() if v is not None},
         evaluation_date=as_of,
     )
+    named_promotion = None
+    if promotion_name:
+        # promotion_overview chỉ trả các quyết định đang hiệu lực nên ưu đãi
+        # đã hết hạn sẽ "vô hình" -> tra riêng để agent trả lời trực tiếp.
+        named_promotion = operational_data.promotion_validity(promotion_name, evaluation_date=as_of)
     if overview is not None:
-        return json.dumps(overview, ensure_ascii=False)
+        result = dict(overview)
+        if promotion_name is not None:
+            result["named_promotion"] = named_promotion
+        return json.dumps(result, ensure_ascii=False)
     _, _, promotions = _load_data()
     if promotions is None:
         return json.dumps(
@@ -578,6 +748,23 @@ def get_eligible_promotions(
             ensure_ascii=False,
         )
     today = as_of
+    if promotion_name and named_promotion is None and promotions:
+        key = promotion_name.strip().lower()
+        row = next((p for p in promotions if key in str(p.get("promo_name", "")).lower()), None)
+        if row is not None:
+            start, end = row.get("valid_from") or "", row.get("valid_to") or ""
+            named_promotion = {
+                "name": row.get("promo_name"),
+                "valid_from": start or None,
+                "valid_to": end or None,
+                "is_active": (row.get("is_active", "").lower() == "true"),
+                "evaluation_date": as_of.isoformat(),
+                "applies_on_evaluation_date": (
+                    row.get("is_active", "").lower() == "true"
+                    and (not start or as_of >= date.fromisoformat(start))
+                    and (not end or as_of <= date.fromisoformat(end))
+                ),
+            }
     tier = _canonical_tier(vinclub_tier)
     group = _canonical_group(customer_group)
     channel = _normalize(purchase_channel) or None
@@ -640,6 +827,7 @@ def get_eligible_promotions(
                 ],
                 "conditional_promotions": conditional,
                 "notes": ["Chưa có xe cụ thể nên chưa tính số tiền ưu đãi."],
+                **({"named_promotion": named_promotion} if promotion_name is not None else {}),
             },
             ensure_ascii=False,
         )
@@ -700,9 +888,39 @@ def get_eligible_promotions(
             "conditional_promotions": conditional,
             "inputs": {"vinclub_tier": tier, "customer_group": group, "purchase_channel": channel},
             "notes": [f"Không tìm thấy xe: {q}" for q in unmatched],
+            **({"named_promotion": named_promotion} if promotion_name is not None else {}),
         },
         ensure_ascii=False,
     )
+
+
+def _match_color(color: str, colors: list[dict]) -> str | None:
+    """Match a user-supplied color against catalog colors, tolerantly.
+
+    The graph layer's color gate already accepts answers like "mau den"
+    (with the word "mau"), and the LLM tends to pass that phrasing verbatim
+    into the tool. Strict normalized equality ("mauden" != "den") therefore
+    rejected valid answers and the agent re-asked for the color forever.
+    """
+    raw = re.sub(r"(?i)^m[àa]u[\s:\-]+", "", (color or "").strip()).strip()
+    key = _normalize(raw)
+    if not key:
+        return None
+    for entry in colors:
+        names = {_normalize(entry.get("color")), _normalize(entry.get("color_name_vi"))}
+        if key in names:
+            return entry.get("color_name_vi") or entry.get("color")
+    # Fallback: unique containment, mirroring _match_province.
+    candidates = [
+        entry.get("color_name_vi") or entry.get("color")
+        for entry in colors
+        if key in _normalize(entry.get("color_name_vi"))
+        or _normalize(entry.get("color_name_vi")) in key
+    ]
+    candidates = [name for name in candidates if name]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
 
 
 @tool
@@ -738,17 +956,31 @@ def price_vehicle_configuration(
         else:
             return json.dumps({"error": {"code": "configuration_invalid", "message": "Cần xác nhận đúng dòng xe và phiên bản trong catalog.", "retryable": False}}, ensure_ascii=False)
     vehicle = vehicles[0]
-    chosen_color = next(
-        (
-            c["color_name_vi"]
-            for c in vehicle["colors"]
-            if _normalize(color) in {_normalize(c["color"]), _normalize(c["color_name_vi"])}
-        ),
-        None,
-    )
+    chosen_color = _match_color(color, vehicle["colors"])
     chosen_province, _ = _match_province(province)
-    if not chosen_color or chosen_province is None:
-        return json.dumps({"error": {"code": "configuration_invalid", "message": "Màu xe hoặc tỉnh/thành chưa khớp dữ liệu hiện hành.", "retryable": False}}, ensure_ascii=False)
+    if not chosen_color and chosen_province is None:
+        return json.dumps({"error": {"code": "configuration_invalid_fields", "fields": ["color", "province"], "message": "Màu xe và tỉnh/thành chưa khớp dữ liệu hiện hành.", "retryable": False}}, ensure_ascii=False)
+    if not chosen_color:
+        available = [c.get("color_name_vi") or c.get("color") for c in vehicle["colors"]]
+        available = [name for name in available if name]
+        hint = (
+            f" Các màu hiện có trong catalog: {', '.join(available)}."
+            if available
+            else ""
+        )
+        return json.dumps(
+            {
+                "error": {
+                    "code": "configuration_missing_color",
+                    "fields": ["color"],
+                    "message": "Bạn muốn chọn màu nào cho xe? Màu xe là thông tin bắt buộc để tính giá lăn bánh." + hint,
+                    "retryable": False,
+                }
+            },
+            ensure_ascii=False,
+        )
+    if chosen_province is None:
+        return json.dumps({"error": {"code": "configuration_invalid_province", "fields": ["province"], "message": "Tỉnh/thành chưa khớp dữ liệu hiện hành. Bạn muốn đăng ký xe ở tỉnh/thành nào?", "retryable": False}}, ensure_ascii=False)
     try:
         request = ConfigRequest(
             model=vehicle["model_name"],
@@ -764,6 +996,8 @@ def price_vehicle_configuration(
     except HTTPException as error:
         return json.dumps(tool_error(error), ensure_ascii=False)
     result["configuration"] = request.model_dump(mode="json")
+    if vehicle.get("_trim_resolution"):
+        result["trim_resolution"] = vehicle["_trim_resolution"]
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -824,9 +1058,267 @@ def get_quote_status() -> str:
     return json.dumps({"quotes": rows}, ensure_ascii=False)
 
 
+_NUMBER_UNIT_RE = re.compile(r"^(\d+(?:[.,]\d+)?)\s*([^\d]*)$")
+
+@lru_cache(maxsize=1)
+def _vehicle_specs_csv_path() -> str | None:
+    """Tìm vehicle_specs.csv qua nhiều vị trí vì layout deploy khác nhau.
+
+    Đặt biến môi trường VINFAST_DATASET_DIR (thư mục chứa gold/) để chỉ định
+    tường minh khi các vị trí mặc định đều không đúng.
+    """
+    here = Path(__file__).resolve()
+    candidates: list[Path] = []
+    env_dir = os.environ.get("VINFAST_DATASET_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir) / "gold" / "rdb_schema" / "vehicle_specs.csv")
+    # Duong dan tuyet doi tren may dev cua user (dataset nam ngoai thu muc hh/).
+    candidates.append(
+        Path(r"H:\Vin\project\P-097-Fork\dataset\gold\rdb_schema\vehicle_specs.csv")
+    )
+    for depth in (3, 4):
+        if len(here.parents) > depth:
+            candidates.append(
+                here.parents[depth] / "dataset" / "gold" / "rdb_schema" / "vehicle_specs.csv"
+            )
+    candidates += [
+        Path.cwd() / "dataset" / "gold" / "rdb_schema" / "vehicle_specs.csv",
+        Path.cwd() / "hh" / "dataset" / "gold" / "rdb_schema" / "vehicle_specs.csv",
+    ]
+    for path in candidates:
+        try:
+            if path.is_file():
+                return str(path)
+        except OSError:
+            continue
+    return None
+
+
+@lru_cache(maxsize=1)
+def _vehicle_specs_rows() -> list[dict[str, str]]:
+    """Đọc vehicle_specs.csv trực tiếp từ dataset (không qua operational_data)."""
+    path = _vehicle_specs_csv_path()
+    if path is None:
+        return []
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as source:
+            return list(csv.DictReader(source))
+    except OSError:
+        return []
+
+
+def _specs_data_version(rows: list[dict[str, str]]) -> str:
+    stamps = [row.get("snapshot_datetime", "") for row in rows if row.get("snapshot_datetime")]
+    return max(stamps) if stamps else "unknown"
+
+
+@lru_cache(maxsize=1)
+def _load_vehicle_specs() -> dict[str, dict[str, list[dict]]]:
+    """{model_name: {trim_name: [{category, spec_label, spec_value}]}} từ vehicle_specs.csv."""
+    grouped: dict[str, dict[str, list[dict]]] = {}
+    for row in _vehicle_specs_rows():
+        model = grouped.setdefault(row["car_name"], {})
+        model.setdefault(row["trim_name"], []).append(
+            {
+                "category": row.get("category", ""),
+                "spec_label": row.get("spec_label", ""),
+                "spec_value": row.get("spec_value", ""),
+            }
+        )
+    return grouped
+
+
+def _spec_label_key(category: str, label: str) -> tuple[str, str]:
+    """Chuẩn hoá để khớp nhãn giữa các xe (bỏ dấu * chú thích ở cuối)."""
+    return (category.strip(), re.sub(r"\*+$", "", label.strip()).strip())
+
+
+def _spec_delta(low: str, high: str) -> str | None:
+    """'130 kW' -> '150 kW' = '+20 kW'. Chỉ tính khi cả hai là 'số + cùng đơn vị'."""
+    first, second = _NUMBER_UNIT_RE.match(low.strip()), _NUMBER_UNIT_RE.match(high.strip())
+    if not (first and second) or first.group(2).strip() != second.group(2).strip():
+        return None
+    diff = round(float(second.group(1).replace(",", ".")) - float(first.group(1).replace(",", ".")), 4)
+    if diff == 0:
+        return None
+    number = f"{diff:+g}".replace(".", ",")
+    return f"{number} {second.group(2).strip()}".strip()
+
+
+def _pick_model(model: str) -> tuple[str, list[dict]] | None:
+    catalog, _, _ = _load_data()
+    term = _normalize(FILLER_RE.sub(" ", unicodedata.normalize("NFC", model or "")))
+    # (?!\d): "VF 99" không được khớp thành "VF 9".
+    names = {
+        v["model_name"]
+        for v in catalog
+        if term and re.search(rf"{re.escape(_normalize(v['model_name']))}(?!\d)", term)
+    }
+    if not names:
+        return None
+    best = max(names, key=lambda name: len(_normalize(name)))  # "VF 8 The All New" thắng "VF 8"
+    return best, [v for v in catalog if v["model_name"] == best]
+
+
+@tool
+def compare_models(model_queries: list[str]) -> str:
+    """So sánh 2+ DÒNG XE khác nhau (ví dụ "VF 6 vs VF 5", "VF 3 hơn VF 5 ở điểm gì",
+    "nên chọn VF 6 hay VF 7"): thông số kỹ thuật từ vehicle_specs.csv và giá niêm yết
+    các phiên bản. Khác biệt số học đã được tính sẵn bằng code (không tự cộng/trừ).
+
+    Dùng khi người dùng hỏi xe này hơn/khác xe kia ở đâu, so sánh giữa các dòng xe,
+    "điểm nổi bật", "đáng tiền hơn". KHÔNG dùng cho so sánh các phiên bản trong cùng
+    một dòng xe — trường hợp đó dùng search_vehicles với từng phiên bản cụ thể.
+
+    Mỗi dòng xe lấy thông số của phiên bản có dữ liệu đầy đủ nhất (ghi rõ trong
+    spec_trim); giá lấy theo phiên bản rẻ nhất. Chỉ diễn đạt lại các khác biệt có
+    trong kết quả; mục nào một xe không có dữ liệu thì ghi rõ "chưa có dữ liệu"
+    thay vì suy đoán.
+
+    Args:
+        model_queries: Từ 2 dòng xe trở lên, ví dụ ["VF 6", "VF 5"].
+    """
+    spec_rows = _vehicle_specs_rows()
+    version = _specs_data_version(spec_rows)
+    catalog, _, _ = _load_data()
+    spec_data = _load_vehicle_specs()
+    picked: list[str] = []
+    notes: list[str] = []
+    for query in model_queries or []:
+        found = _pick_model(query)
+        if found is None:
+            notes.append(f"Không tìm thấy dòng xe: {query}")
+        elif found[0] not in picked:
+            picked.append(found[0])
+    if len(picked) < 2:
+        return json.dumps(
+            {
+                "tool": "compare_models",
+                "matched": False,
+                "data_version": version,
+                "notes": notes
+                + [
+                    "Cần từ 2 dòng xe trở lên để so sánh "
+                    "(so sánh các phiên bản trong cùng một dòng xe thì dùng search_vehicles với từng phiên bản)."
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+    models_info = []
+    model_specs: dict[str, dict[tuple[str, str], dict]] = {}
+    # Catalog keys may be stored as ``VF6`` while the specification snapshot
+    # uses the display form ``VF 6``. Match by the same normalized key used by
+    # catalog resolution instead of requiring identical spelling.
+    specs_by_normalized_model = {
+        _normalize(name): trims for name, trims in spec_data.items()
+    }
+    for model_name in picked:
+        vehicles = sorted(
+            [v for v in catalog if v["model_name"] == model_name], key=lambda v: v["price_vnd"]
+        )
+        cheapest = vehicles[0] if vehicles else None
+        trims = spec_data.get(model_name) or specs_by_normalized_model.get(_normalize(model_name), {})
+        spec_trim = max(trims, key=lambda t: len(trims[t])) if trims else None
+        flat: dict[tuple[str, str], dict] = {}
+        if spec_trim:
+            for item in trims[spec_trim]:
+                key = _spec_label_key(item["category"], item["spec_label"])
+                flat.setdefault(
+                    key,
+                    {
+                        "category": item["category"],
+                        "label": item["spec_label"],
+                        "value": item["spec_value"],
+                    },
+                )
+        model_specs[model_name] = flat
+        info: dict = {"model": model_name, "spec_trim": spec_trim, "spec_count": len(flat)}
+        if cheapest:
+            info.update(
+                cheapest_edition=cheapest["edition"],
+                cheapest_price_vnd=cheapest["price_vnd"],
+                cheapest_price_text=_format_vnd(cheapest["price_vnd"]),
+            )
+        models_info.append(info)
+        if not flat:
+            notes.append(f"{model_name}: chưa có dữ liệu thông số trong vehicle_specs.csv.")
+
+    first = picked[0]
+    all_keys: dict[tuple[str, str], dict] = {}
+    for model_name in picked:
+        for key, item in model_specs[model_name].items():
+            all_keys.setdefault(key, item)
+    common_specs, same_specs, unique_specs = [], [], {m: [] for m in picked}
+    for key in sorted(all_keys, key=lambda k: (k[0], k[1])):
+        present = {m: model_specs[m][key]["value"] for m in picked if key in model_specs[m]}
+        item = all_keys[key]
+        if len(present) == len(picked):
+            values = list(present.values())
+            if len(set(values)) == 1:
+                same_specs.append(
+                    {"category": item["category"], "label": item["label"], "value": values[0]}
+                )
+            else:
+                deltas = {m: (_spec_delta(values[0], v) if m != first else None) for m, v in present.items()}
+                common_specs.append(
+                    {
+                        "category": item["category"],
+                        "label": item["label"],
+                        "values": present,
+                        "delta_vs_" + first: {m: d for m, d in deltas.items() if d},
+                    }
+                )
+        else:
+            for m, v in present.items():
+                unique_specs[m].append(
+                    {
+                        "category": item["category"],
+                        "label": item["label"],
+                        "value": v,
+                        "missing_in": [o for o in picked if o != m],
+                    }
+                )
+
+    prices = [info for info in models_info if "cheapest_price_vnd" in info]
+    price_comparison = None
+    if len(prices) >= 2:
+        base = prices[0]["cheapest_price_vnd"]
+        price_comparison = {
+            "base_model": prices[0]["model"],
+            **{
+                info["model"]: {
+                    "price_vnd": info["cheapest_price_vnd"],
+                    "price_text": info["cheapest_price_text"],
+                    "delta_vs_base_vnd": info["cheapest_price_vnd"] - base,
+                    "delta_vs_base_text": _format_vnd(info["cheapest_price_vnd"] - base),
+                }
+                for info in prices
+            },
+        }
+
+    return json.dumps(
+        {
+            "tool": "compare_models",
+            "models": models_info,
+            "price_comparison": price_comparison,
+            "common_specs": common_specs,
+            "same_specs": same_specs,
+            "unique_specs": unique_specs,
+            "notes": notes,
+            "catalog_source": "dataset/gold/rdb_schema/vehicle_specs.csv",
+            "spec_source": _vehicle_specs_csv_path(),
+            "spec_rows_loaded": len(spec_rows),
+            "data_version": version,
+        },
+        ensure_ascii=False,
+    )
+
+
 VINFAST_TOOLS = [
     search_gold_knowledge,
     search_vehicles,
+    compare_models,
     lookup_car_color_options,
     lookup_province_fees,
     calculate_vehicle_tco,

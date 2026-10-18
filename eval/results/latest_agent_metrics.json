@@ -1,0 +1,224 @@
+{
+  "run_dir": "H:\\Vin\\project\\P-097-Fork\\.ai-log\\agent-eval\\20261017T180008Z",
+  "cases": 65,
+  "observed_items": 65,
+  "unobserved_ids": [],
+  "runs_per_item": [
+    3
+  ],
+  "metrics": [
+    {
+      "metric": "tool_ok",
+      "n_items": 65,
+      "mean": 0.8974,
+      "ci95": [
+        0.8256,
+        0.9641
+      ]
+    },
+    {
+      "metric": "param_ok",
+      "n_items": 65,
+      "mean": 0.8718,
+      "ci95": [
+        0.7897,
+        0.9436
+      ]
+    },
+    {
+      "metric": "forbidden_ok",
+      "n_items": 65,
+      "mean": 0.9846,
+      "ci95": [
+        0.9538,
+        1.0
+      ]
+    },
+    {
+      "metric": "facts_ok",
+      "n_items": 65,
+      "mean": 0.7077,
+      "ci95": [
+        0.5949,
+        0.8154
+      ]
+    },
+    {
+      "metric": "banned_ok",
+      "n_items": 65,
+      "mean": 1.0,
+      "ci95": [
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "metric": "business_assertions_ok",
+      "n_items": 0
+    },
+    {
+      "metric": "pass_code",
+      "n_items": 65,
+      "mean": 0.6051,
+      "ci95": [
+        0.4821,
+        0.7179
+      ]
+    }
+  ],
+  "by_category": {
+    "accessories": {
+      "n_items": 2,
+      "pass_code": 0.5
+    },
+    "adversarial": {
+      "n_items": 3,
+      "pass_code": 1.0
+    },
+    "catalog_negative": {
+      "n_items": 3,
+      "pass_code": 1.0
+    },
+    "catalog_price": {
+      "n_items": 4,
+      "pass_code": 0.0
+    },
+    "colors": {
+      "n_items": 1,
+      "pass_code": 1.0
+    },
+    "compare_models": {
+      "n_items": 4,
+      "pass_code": 0.75
+    },
+    "compare_trims": {
+      "n_items": 2,
+      "pass_code": 0.0
+    },
+    "context": {
+      "n_items": 4,
+      "pass_code": 0.5
+    },
+    "faq_policy": {
+      "n_items": 7,
+      "pass_code": 0.429
+    },
+    "fees": {
+      "n_items": 4,
+      "pass_code": 1.0
+    },
+    "installment": {
+      "n_items": 3,
+      "pass_code": 0.667
+    },
+    "out_of_scope": {
+      "n_items": 4,
+      "pass_code": 0.75
+    },
+    "pricing": {
+      "n_items": 6,
+      "pass_code": 0.722
+    },
+    "promotions": {
+      "n_items": 6,
+      "pass_code": 0.444
+    },
+    "quote_status": {
+      "n_items": 2,
+      "pass_code": 1.0
+    },
+    "recommendation": {
+      "n_items": 1,
+      "pass_code": 1.0
+    },
+    "rolling_cost_tco": {
+      "n_items": 3,
+      "pass_code": 0.667
+    },
+    "spec_lookup": {
+      "n_items": 6,
+      "pass_code": 0.389
+    }
+  },
+  "by_difficulty": {
+    "easy": {
+      "n_items": 6,
+      "pass_code": 0.556
+    },
+    "hard": {
+      "n_items": 26,
+      "pass_code": 0.615
+    },
+    "medium": {
+      "n_items": 33,
+      "pass_code": 0.606
+    }
+  },
+  "adversarial": {
+    "adversarial": {
+      "n_items": 19,
+      "pass_code": 0.614
+    },
+    "normal": {
+      "n_items": 46,
+      "pass_code": 0.601
+    }
+  },
+  "tool_success_rate": 0.9704,
+  "latency_ms": {
+    "mean": 2470.1,
+    "p95_nearest_rank": 4706.8
+  },
+  "mean_extra_tool_calls": 0.185,
+  "llm_unavailable_runs": 0,
+  "failing_items": [
+    "accessory-002",
+    "catalog-001",
+    "catalog-002",
+    "catalog-003",
+    "catalog-008",
+    "compare-001",
+    "compare-003",
+    "compare-004",
+    "context-002",
+    "context-004",
+    "faq-001",
+    "faq-003",
+    "faq-004",
+    "faq-006",
+    "finance-002",
+    "pricing-004",
+    "pricing-005",
+    "pricing-006",
+    "promo-002",
+    "promo-003",
+    "promo-004",
+    "promo-005",
+    "scope-002",
+    "spec-001",
+    "spec-002",
+    "spec-004",
+    "spec-006",
+    "tco-003"
+  ],
+  "needs_pinned_snapshot_items": [
+    "color-001",
+    "context-003",
+    "fees-001",
+    "fees-002",
+    "finance-001",
+    "pricing-001",
+    "pricing-006",
+    "promo-001",
+    "promo-005",
+    "quote-001",
+    "tco-001",
+    "tco-003"
+  ],
+  "caveats": [
+    "Tỉ lệ tính theo item (trung bình các lần chạy); CI bootstrap theo item, không coi run là mẫu độc lập.",
+    "reviewed_by=pending_domain_review: chưa dùng làm cổng release.",
+    "Case needs_pinned_snapshot chỉ kiểm tra tool/tham số/an toàn, không kiểm tra số cụ thể.",
+    "must_not_include có thể false-positive khi agent nhắc lại cụm để từ chối; xem banned_hits."
+  ]
+}

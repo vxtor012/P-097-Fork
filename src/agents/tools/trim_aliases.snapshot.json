@@ -1,0 +1,11 @@
+{
+  "version": "v1.0-catalog-20261018",
+  "aliases": [
+    {
+      "models": ["VF 3", "VF 5", "VF 6", "VF 7", "VF 8", "VF 9"],
+      "inputs": ["Eco"],
+      "targets": ["Tiêu chuẩn", "Eco"],
+      "user_note": "Bản Tiêu chuẩn trước đây gọi là Eco."
+    }
+  ]
+}

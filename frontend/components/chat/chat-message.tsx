@@ -50,6 +50,14 @@ export function ChatMessage({ message }: { message: Message }) {
                   <th className="border px-2 py-1 bg-gray-50 font-medium text-left">{children}</th>
                 ),
                 td: ({ children }) => <td className="border px-2 py-1">{children}</td>,
+                img: ({ src, alt }) => (
+                  <img
+                    src={typeof src === "string" ? src : undefined}
+                    alt={alt || "Ảnh màu xe VinFast"}
+                    loading="lazy"
+                    className="my-2 max-h-40 max-w-full rounded-md object-contain"
+                  />
+                ),
               }}
             >
               {message.content}

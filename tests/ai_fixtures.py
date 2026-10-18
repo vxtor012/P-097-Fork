@@ -9,7 +9,10 @@ from scripts.db.import_ai_data import HEADERS, TABLES
 def catalog():
     tables = {name: [] for name in TABLES}
     for index, (model, trim, code) in enumerate([
-        ("VF 6", "VF6 Plus", "C6"), ("VF 8", "VF8 Eco", "C8"),
+        ("VF 3", "Tiêu chuẩn", "C3"), ("VF 5", "Tiêu chuẩn", "C5"),
+        ("VF 6", "Tiêu chuẩn", "C6S"), ("VF 6", "VF6 Plus", "C6"),
+        ("VF 7", "Tiêu chuẩn", "C7"), ("VF 8", "VF8 Eco", "C8"),
+        ("VF 9", "Tiêu chuẩn", "C9"),
         ("EC Van", "PAK2", "VAN_A"), ("VF 2", "VF2", "C2"),
     ]):
         car_id = str(index)

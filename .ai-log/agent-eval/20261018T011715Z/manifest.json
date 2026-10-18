@@ -1,0 +1,20 @@
+{
+  "format_version": 1,
+  "status": "complete",
+  "created_at_utc": "2026-10-18T01:17:20.160185+00:00",
+  "case_file": "eval/agent_cases.v1.jsonl",
+  "case_set_sha256": "14833ac7540274f7b721a158b79950770e6aa1a997830d8190fd43749b6ec4c9",
+  "selected_case_ids": [
+    "pricing-001"
+  ],
+  "selected_case_set_sha256": "bf7d544ee1574cc3ff9ae27451a78a2cef00548bb64c709c1b949a59a94b60ab",
+  "runs": 1,
+  "oracle_version": "v1.0-catalog-20261012",
+  "freeze_date": null,
+  "provider": "auto",
+  "model": "gpt-4o-mini",
+  "prompt_template_sha256": "e8fd5071db5b0b7faca88f5754f05db9555304c28d67a8dc96cb8c10dcb32174",
+  "operational_snapshot_sha256": "6d857ba192c2d925fd2767f53dac508951b370b0a07cf33dc9f2e8065174524f",
+  "trim_alias_contract_sha256": "a58c92329233a23c57b87f97f87d0ed694f4e63c4fcabc567243be7549f913c6",
+  "code_sha256": "04095b83545e09aea195148034c87edbc2dda3ff8366edd74210317e72903cf8"
+}

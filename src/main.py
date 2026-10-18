@@ -65,15 +65,25 @@ async def readiness():
                     )
                 ).scalar()
             )
-            rag = bool(
-                (await connection.execute(text("SELECT EXISTS(SELECT FROM ai_data.datasets WHERE is_active)"))).scalar()
+            # The operational database can be healthy while the optional RAG
+            # schema has not yet been imported. Do not report that state as a
+            # database outage; it obscures the real remediation and makes the
+            # frontend diagnosis misleading.
+            rag_table_exists = bool(
+                (await connection.execute(text("SELECT to_regclass('ai_data.datasets') IS NOT NULL"))).scalar()
             )
+            rag = False
+            if rag_table_exists:
+                rag = bool(
+                    (await connection.execute(text("SELECT EXISTS(SELECT FROM ai_data.datasets WHERE is_active)"))).scalar()
+                )
         data = {
             "status": "ready" if schema_ready else "migration_required",
             "database": "connected",
             "schema_ready": schema_ready,
             "ai_configured": bool(settings.openai_api_key or settings.google_api_key),
             "rag_dataset_ready": rag,
+            "rag_schema_ready": rag_table_exists,
         }
         return JSONResponse(data, status_code=200 if schema_ready else 503)
     except Exception:

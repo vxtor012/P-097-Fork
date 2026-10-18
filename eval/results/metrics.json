@@ -1,0 +1,130 @@
+{
+  "run_dir": ".ai-log/agent-eval/<ts>",
+  "cases": 65,
+  "observed_items": 0,
+  "unobserved_ids": [
+    "accessory-001",
+    "accessory-002",
+    "catalog-001",
+    "catalog-002",
+    "catalog-003",
+    "catalog-004",
+    "catalog-005",
+    "catalog-006",
+    "catalog-007",
+    "catalog-008",
+    "color-001",
+    "compare-001",
+    "compare-002",
+    "compare-003",
+    "compare-004",
+    "compare-005",
+    "compare-006",
+    "context-001",
+    "context-002",
+    "context-003",
+    "context-004",
+    "faq-001",
+    "faq-002",
+    "faq-003",
+    "faq-004",
+    "faq-005",
+    "faq-006",
+    "faq-007",
+    "fees-001",
+    "fees-002",
+    "fees-003",
+    "fees-004",
+    "finance-001",
+    "finance-002",
+    "finance-003",
+    "pricing-001",
+    "pricing-002",
+    "pricing-003",
+    "pricing-004",
+    "pricing-005",
+    "pricing-006",
+    "promo-001",
+    "promo-002",
+    "promo-003",
+    "promo-004",
+    "promo-005",
+    "promo-006",
+    "quote-001",
+    "quote-002",
+    "scope-001",
+    "scope-002",
+    "scope-003",
+    "scope-004",
+    "security-001",
+    "security-002",
+    "security-003",
+    "spec-001",
+    "spec-002",
+    "spec-003",
+    "spec-004",
+    "spec-005",
+    "spec-006",
+    "tco-001",
+    "tco-002",
+    "tco-003"
+  ],
+  "runs_per_item": [],
+  "metrics": [
+    {
+      "metric": "tool_ok",
+      "n_items": 0
+    },
+    {
+      "metric": "param_ok",
+      "n_items": 0
+    },
+    {
+      "metric": "forbidden_ok",
+      "n_items": 0
+    },
+    {
+      "metric": "facts_ok",
+      "n_items": 0
+    },
+    {
+      "metric": "banned_ok",
+      "n_items": 0
+    },
+    {
+      "metric": "pass_code",
+      "n_items": 0
+    }
+  ],
+  "by_category": {},
+  "by_difficulty": {},
+  "adversarial": {},
+  "tool_success_rate": null,
+  "latency_ms": {
+    "mean": null,
+    "p95_nearest_rank": null
+  },
+  "mean_extra_tool_calls": null,
+  "llm_unavailable_runs": 0,
+  "failing_items": [],
+  "needs_pinned_snapshot_items": [
+    "color-001",
+    "context-003",
+    "fees-001",
+    "fees-002",
+    "finance-001",
+    "pricing-001",
+    "pricing-006",
+    "promo-001",
+    "promo-005",
+    "quote-001",
+    "tco-001",
+    "tco-003"
+  ],
+  "caveats": [
+    "Tỉ lệ tính theo item (trung bình các lần chạy); CI bootstrap theo item, không coi run là mẫu độc lập.",
+    "reviewed_by=pending_domain_review: chưa dùng làm cổng release.",
+    "Case needs_pinned_snapshot chỉ kiểm tra tool/tham số/an toàn, không kiểm tra số cụ thể.",
+    "must_not_include có thể false-positive khi agent nhắc lại cụm để từ chối; xem banned_hits."
+  ]
+}

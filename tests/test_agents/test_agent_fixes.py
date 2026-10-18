@@ -7,8 +7,10 @@ from langchain_core.tools import tool
 
 from src.agents.graph import (
     CONTACT_MESSAGE,
+    _authoritative_reply,
     _canonicalize_tool_calls,
     _comparison_queries,
+    _generic_trim_query,
     _intent_prefetch,
     _is_clarification,
     _is_repeat_call,
@@ -157,6 +159,28 @@ def test_comparison_queries_are_batched():
     assert _comparison_queries("VF 8 Eco và VF 8 Plus có màu nào khác nhau?") == ["VF 8 Eco", "VF 8 Plus"]
 
 
+def test_generic_trim_comparison_prefetches_all_trim_specs():
+    result = _intent_prefetch(
+        "Các bản VF 7 khác nhau thế nào?",
+        [],
+        1,
+        {"search_vehicles"},
+    )
+    assert result.tool_calls[0]["name"] == "search_vehicles"
+    assert result.tool_calls[0]["args"] == {
+        "vehicle_queries": ["VF 7"],
+        "fields": ["overview", "price", "specifications"],
+    }
+
+
+def test_standard_catalog_label_maps_to_eco_snapshot():
+    assert vt._trim_specifications("VF 7", "Tiêu chuẩn")
+
+
+def test_cross_model_comparison_is_not_treated_as_generic_trim_query():
+    assert _generic_trim_query("VF 5 và VF 6 khác nhau thế nào?") is None
+
+
 def test_comparison_prefetch_uses_catalog_for_cross_model_colors():
     result = _intent_prefetch(
         "So sánh VF 5 Plus với VF 6 Plus về giá và màu ngoại thất.",
@@ -171,6 +195,53 @@ def test_comparison_prefetch_uses_catalog_for_cross_model_colors():
     }
 
 
+def test_plain_model_comparison_prefetches_compare_models():
+    result = _intent_prefetch(
+        "So sánh VF 6 và VF 5",
+        [],
+        1,
+        {"search_vehicles", "compare_models"},
+    )
+    assert result.tool_calls[0]["name"] == "compare_models"
+    assert result.tool_calls[0]["args"] == {"model_queries": ["VF 6", "VF 5"]}
+
+
+def test_authoritative_model_comparison_renders_specs():
+    answer, _ = _authoritative_reply([
+        ToolMessage(content=json.dumps({
+            "tool": "compare_models",
+            "models": [
+                {"model": "VF 6", "cheapest_edition": "Eco", "cheapest_price_text": "599 triệu đồng"},
+                {"model": "VF 5", "cheapest_edition": "Plus", "cheapest_price_text": "414 triệu đồng"},
+            ],
+            "price_comparison": {
+                "base_model": "VF 6",
+                "VF 6": {"delta_vs_base_text": "0 triệu đồng"},
+                "VF 5": {"delta_vs_base_text": "-185 triệu đồng"},
+            },
+            "common_specs": [{
+                "label": "Công suất tối đa",
+                "values": {"VF 6": "130 kW/hp", "VF 5": "100 kW/hp"},
+            }],
+            "unique_specs": {},
+        }, ensure_ascii=False), tool_call_id="compare"),
+    ])
+    assert "130 kW/hp" in answer
+    assert "100 kW/hp" in answer
+    assert "chưa có dữ liệu thông số" not in answer.lower()
+
+
+def test_compare_models_matches_catalog_keys_without_spaces(monkeypatch):
+    monkeypatch.setattr(vt, "_load_data", lambda: ([
+        {"model_name": "VF6", "edition": "Tiêu chuẩn", "price_vnd": 599_000_000},
+        {"model_name": "VF5", "edition": "Tiêu chuẩn", "price_vnd": 414_000_000},
+    ], [], []))
+    result = json.loads(vt.compare_models.func(["VF 6", "VF 5"]))
+    assert result["models"][0]["spec_count"] > 0
+    assert result["models"][1]["spec_count"] > 0
+    assert result["common_specs"]
+
+
 def test_comparison_with_technical_requirements_is_not_reduced_to_prices():
     assert _intent_prefetch("So sánh VF 5 và VF 6 về giá và pin", [], 1, {"search_vehicles"}) is None
 
@@ -178,6 +249,42 @@ def test_comparison_with_technical_requirements_is_not_reduced_to_prices():
 def test_mixed_brand_request_has_priority_over_budget_clarification():
     result = prefilter({"question": "So sánh xe VinFast với Toyota, ngân sách 700 triệu"})
     assert result["error"] == "out_of_scope"
+
+
+def test_incomplete_rolling_price_asks_for_color():
+    result = prefilter({"question": "Tính giá lăn bánh VF 6 Plus ở Hà Nội, mua pin"})
+    assert result["error"] == "clarification_required"
+    assert "màu" in result["response"].lower()
+
+
+def test_color_answer_resumes_pending_price_request():
+    first = prefilter({"question": "Tạo báo giá VF 3 Plus ở Hà Nội"})
+    assert first["error"] == "clarification_required"
+    second = prefilter({
+        "question": "màu đen",
+        "profile": first["profile"],
+        "messages": first.get("messages", []),
+    })
+    assert second["error"] is None
+    assert "VF 3 Plus" in second["question"]
+    assert "Hà Nội" in second["question"]
+    assert "màu đen" in second["question"]
+    assert second["profile"]["pricing_slot"] is None
+
+
+def test_color_answer_recovers_price_slot_from_recent_chat_history():
+    second = prefilter({
+        "question": "màu đen",
+        "messages": [
+            HumanMessage(content="Tạo báo giá VF 3 Plus ở Hà Nội"),
+            AIMessage(content="Bạn muốn chọn màu nào cho xe? Màu xe là thông tin bắt buộc."),
+            HumanMessage(content="màu đen"),
+        ],
+    })
+    assert second["error"] is None
+    assert "VF 3 Plus" in second["question"]
+    assert "Hà Nội" in second["question"]
+    assert "màu đen" in second["question"]
 
 
 @pytest.mark.asyncio
@@ -202,6 +309,38 @@ def test_compact_colors_omit_images_without_changing_catalog():
     assert compact["matched_versions"]
     assert all("image_url" not in color for row in compact["matched_versions"] for color in row["exterior_colors"])
     assert any("image_url" in color for row in full["matched_versions"] for color in row["exterior_colors"])
+
+
+def test_color_lookup_includes_visual_options_by_default(monkeypatch):
+    monkeypatch.setattr(vt, "_resolve", lambda _queries: ([{
+        "model_name": "VF6",
+        "edition": "Plus",
+        "colors": [{
+            "color": "Black",
+            "color_name_vi": "Đen Huyền Bí",
+            "image_url": "https://example.test/black.png",
+            "extra_price_vnd": 0,
+            "total_car_price_vnd": 639_000_000,
+        }],
+        "unavailable_colors": [],
+    }], []))
+    result = json.loads(vt.lookup_car_color_options.invoke({"vehicle_queries": ["VF 6 Plus"]}))
+    assert result["color_options"]
+    assert all(option.get("image_url") for option in result["color_options"])
+
+
+def test_authoritative_color_reply_renders_catalog_images():
+    answer, _ = _authoritative_reply([
+        ToolMessage(
+            content=json.dumps({"color_options": [{
+                "color_name_vi": "Đen Huyền Bí",
+                "image_url": "https://example.test/black.png",
+                "extra_price_vnd": 0,
+            }]}),
+            tool_call_id="colors",
+        )
+    ])
+    assert "![Đen Huyền Bí](https://example.test/black.png)" in answer
 
 
 def test_budget_shortlist_is_bounded_without_truncating_explicit_lookups():
@@ -280,6 +419,94 @@ def test_resolve_is_precise():
 def test_resolve_unknown_edition_is_reported():
     found, unmatched = vt._resolve(["VF 6 Ultra"])
     assert found and unmatched
+
+
+def test_trim_alias_is_snapshot_validated_and_emits_user_note(monkeypatch):
+    catalog = [{
+        "model_name": "VF 6", "edition": "Tiêu chuẩn", "name": "VinFast VF 6",
+        "price_vnd": 599_000_000, "price_version": "test", "segment": None, "seats": None,
+        "colors": [], "unavailable_colors": [], "colors_inferred_from_base_trim": False,
+    }]
+    monkeypatch.setattr(vt, "_load_data", lambda: (catalog, [], []))
+
+    resolved, unmatched = vt._resolve(["VF 6 Eco"])
+    assert not unmatched
+    assert resolved[0]["edition"] == "Tiêu chuẩn"
+    assert resolved[0]["_trim_resolution"] == {
+        "requested_version": "Eco", "resolved_version": "Tiêu chuẩn",
+        "alias_version": "v1.0-catalog-20261018", "user_note": "Bản Tiêu chuẩn trước đây gọi là Eco.",
+    }
+
+    # This is a resolver test only: it accepts an unaccented trim spelling, but
+    # does not claim that the agent's Vietnamese NLU routed the request correctly.
+    canonical, canonical_unmatched = vt._resolve(["VF 6 Tieu chuan"])
+    assert not canonical_unmatched and canonical[0]["edition"] == "Tiêu chuẩn"
+    assert "_trim_resolution" not in canonical[0]
+
+    output = json.loads(vt.search_vehicles.invoke({"vehicle_queries": ["VF 6 Eco"], "fields": ["price"]}))
+    assert output["matched_versions"][0]["trim_resolution"]["resolved_version"] == "Tiêu chuẩn"
+    assert "Bản Tiêu chuẩn trước đây gọi là Eco." in output["notes"]
+
+
+def test_trim_alias_accepts_spaced_request_for_compact_live_model_name(monkeypatch):
+    """Regression: live catalog uses VF6 while the request is normally VF 6."""
+    catalog = [{
+        "model_name": "VF6", "edition": "Tiêu chuẩn", "name": "VinFast VF 6",
+        "price_vnd": 599_000_000, "price_version": "test", "segment": None, "seats": None,
+        "colors": [], "unavailable_colors": [], "colors_inferred_from_base_trim": False,
+    }]
+    monkeypatch.setattr(vt, "_load_data", lambda: (catalog, [], []))
+
+    resolved, unmatched = vt._resolve(["VF 6 Eco"])
+
+    assert not unmatched
+    assert resolved[0]["edition"] == "Tiêu chuẩn"
+    assert resolved[0]["_trim_resolution"]["requested_version"] == "Eco"
+    assert resolved[0]["_trim_resolution"]["resolved_version"] == "Tiêu chuẩn"
+
+
+def test_trim_alias_fails_fast_when_current_catalog_has_no_target(monkeypatch):
+    catalog = [{"model_name": "VF 6", "edition": "Plus"}]
+    with pytest.raises(RuntimeError, match="đúng một target"):
+        vt._trim_alias("VF 6", "Eco", catalog)
+
+
+def test_pricing_resolves_eco_alias_to_current_catalog_trim(monkeypatch):
+    catalog = [{
+        "model_name": "VF 6", "edition": "Tiêu chuẩn", "name": "VinFast VF 6",
+        "price_vnd": 599_000_000, "price_version": "test", "segment": None, "seats": None,
+        "colors": [{"color": "black", "color_name_vi": "Đen"}], "unavailable_colors": [],
+        "colors_inferred_from_base_trim": False,
+    }]
+    monkeypatch.setattr(vt, "_load_data", lambda: (catalog, [], []))
+    monkeypatch.setattr(vt, "_match_province", lambda _: ({"province_name": "Hà Nội"}, []))
+    monkeypatch.setattr(vt.operational_data, "price_configuration", lambda request: {
+        "pricing_hash": "test", "final_price": 600_000_000, "base_price": 599_000_000,
+        "battery_cost": 0, "accessories": [], "rolling_costs": {}, "promotions": [], "disclaimer": "test",
+    })
+    result = json.loads(vt.price_vehicle_configuration.func.__wrapped__(
+        model="VF 6", version="Eco", color="Đen", province="Hà Nội", battery="buy", accessories=[],
+    ))
+    assert result["configuration"]["version"] == "Tiêu chuẩn"
+    assert result["trim_resolution"]["requested_version"] == "Eco"
+    assert result["trim_resolution"]["resolved_version"] == "Tiêu chuẩn"
+
+
+def test_authoritative_pricing_reply_explains_resolved_legacy_trim():
+    answer, _ = _authoritative_reply([ToolMessage(content=json.dumps({
+        "pricing_hash": "test", "final_price": 600_000_000, "base_price": 599_000_000,
+        "battery_cost": 0, "accessories": [], "rolling_costs": {}, "promotions": [], "disclaimer": "test",
+        "trim_resolution": {"user_note": "Bản Tiêu chuẩn trước đây gọi là Eco."},
+    }, ensure_ascii=False), tool_call_id="price")])
+    assert "Bản Tiêu chuẩn trước đây gọi là Eco." in answer
+
+
+def test_authoritative_pricing_reply_omits_legacy_note_for_canonical_trim():
+    answer, _ = _authoritative_reply([ToolMessage(content=json.dumps({
+        "pricing_hash": "test", "final_price": 600_000_000, "base_price": 599_000_000,
+        "battery_cost": 0, "accessories": [], "rolling_costs": {}, "promotions": [], "disclaimer": "test",
+    }, ensure_ascii=False), tool_call_id="price")])
+    assert "trước đây gọi là Eco" not in answer
 
 
 def test_price_configuration_resolves_model_trim_alias(monkeypatch):

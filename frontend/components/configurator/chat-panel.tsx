@@ -190,6 +190,14 @@ function Bubble({ message }: { message: ReturnType<typeof useChat>["messages"][0
               ),
               th: ({ children }) => <th className="border px-1.5 py-1 bg-gray-50 text-left">{children}</th>,
               td: ({ children }) => <td className="border px-1.5 py-1">{children}</td>,
+              img: ({ src, alt }) => (
+                <img
+                  src={typeof src === "string" ? src : undefined}
+                  alt={alt || "Ảnh màu xe VinFast"}
+                  loading="lazy"
+                  className="my-2 max-h-36 max-w-full rounded-md object-contain"
+                />
+              ),
             }}
           >
             {message.content}
